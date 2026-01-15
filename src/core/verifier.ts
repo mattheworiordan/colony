@@ -1,5 +1,7 @@
 import { SubTask, VerificationResult, TestResult, LintingResult, BuildResult } from '../types';
 import { execSync } from 'child_process';
+import * as fs from 'fs';
+import * as path from 'path';
 
 /**
  * Verifies task completion through various checks
@@ -43,8 +45,7 @@ export class Verifier {
   private async runTests(): Promise<TestResult[] | undefined> {
     try {
       // Check if test script exists in package.json
-      const hasTests = this.commandExists('npm test');
-      if (!hasTests) {
+      if (!this.hasNpmScript('test')) {
         return undefined;
       }
       
@@ -73,8 +74,7 @@ export class Verifier {
   private async runLinting(): Promise<LintingResult | undefined> {
     try {
       // Check if lint script exists
-      const hasLint = this.commandExists('npm run lint');
-      if (!hasLint) {
+      if (!this.hasNpmScript('lint')) {
         return undefined;
       }
       
@@ -104,8 +104,7 @@ export class Verifier {
   private async runBuild(): Promise<BuildResult | undefined> {
     try {
       // Check if build script exists
-      const hasBuild = this.commandExists('npm run build');
-      if (!hasBuild) {
+      if (!this.hasNpmScript('build')) {
         return undefined;
       }
       
@@ -161,12 +160,17 @@ export class Verifier {
   }
 
   /**
-   * Check if a command exists
+   * Check if npm script exists in package.json
    */
-  private commandExists(command: string): boolean {
+  private hasNpmScript(scriptName: string): boolean {
     try {
-      execSync(`which ${command.split(' ')[0]}`, { stdio: 'pipe' });
-      return true;
+      const packageJsonPath = path.join(process.cwd(), 'package.json');
+      if (!fs.existsSync(packageJsonPath)) {
+        return false;
+      }
+      
+      const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+      return packageJson.scripts && packageJson.scripts[scriptName] !== undefined;
     } catch {
       return false;
     }

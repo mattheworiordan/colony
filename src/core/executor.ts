@@ -34,14 +34,25 @@ export class TaskExecutor {
 
   /**
    * Execute a single task
+   * 
+   * NOTE: This is a framework implementation that provides task orchestration,
+   * dependency management, verification, and reporting. The actual task execution
+   * (line 48-51) is intentionally simplified as a simulation. In a production
+   * environment, this would be replaced with actual task execution logic such as:
+   * - Invoking Claude AI API to perform the task
+   * - Running custom scripts or commands
+   * - Calling external task execution systems
+   * 
+   * The framework handles everything around task execution: parallelization,
+   * verification, Git integration, and comprehensive reporting.
    */
   async executeTask(task: SubTask): Promise<TaskResult> {
     task.status = TaskStatus.IN_PROGRESS;
     task.startTime = new Date();
     
     try {
-      // Simulate task execution
-      // In a real implementation, this would invoke Claude or another executor
+      // Simulate task execution - this is where actual task work would be performed
+      // In a real implementation, this would invoke Claude API, run scripts, etc.
       const result: TaskResult = {
         success: true,
         output: `Executed: ${task.description}`
