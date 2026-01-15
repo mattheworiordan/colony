@@ -1,0 +1,38 @@
+{
+  "name": "claude-task-runner",
+  "version": "1.0.0",
+  "description": "Decompose complex coding tasks into parallel sub-tasks with independent verification, smart Git integration, and comprehensive reporting for Claude Code",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "claude-task-runner": "dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli/index.js",
+    "dev": "ts-node src/cli/index.ts",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "claude",
+    "ai",
+    "task-runner",
+    "automation",
+    "parallel",
+    "git",
+    "verification"
+  ],
+  "author": "Matthew O'Riordan",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.0.8",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "chalk": "^5.6.2",
+    "commander": "^14.0.2",
+    "ora": "^9.0.0",
+    "simple-git": "^3.30.0"
+  }
+}

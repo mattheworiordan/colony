@@ -1,0 +1,16 @@
+{
+  "maxParallelTasks": 5,
+  "verificationEnabled": true,
+  "gitIntegration": {
+    "enabled": true,
+    "autoCommit": true,
+    "autoStage": true,
+    "branchPrefix": "feature",
+    "commitMessageTemplate": "feat: {description}"
+  },
+  "reporting": {
+    "verbose": true,
+    "outputFormat": "markdown",
+    "logFile": "task-report.md"
+  }
+}
