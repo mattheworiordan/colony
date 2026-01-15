@@ -221,6 +221,23 @@ This tool is designed to work seamlessly with Claude Code AI assistants. Claude 
 4. Review and verify completed work
 5. Generate comprehensive reports
 
+### Framework vs. Implementation
+
+The current implementation provides a **complete orchestration framework** including:
+- Task decomposition and dependency analysis
+- Parallel execution management
+- Independent verification system
+- Smart Git integration
+- Comprehensive reporting
+
+The actual task execution is intentionally simplified (simulated) to demonstrate the framework. For production use, you can extend the `TaskExecutor` class to integrate with:
+- Claude AI API for intelligent task execution
+- Custom scripts and automation tools
+- CI/CD systems
+- Other execution backends
+
+See [EXTENDING.md](EXTENDING.md) for detailed examples of custom executor implementation.
+
 ## Development
 
 ### Build from Source
