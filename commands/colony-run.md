@@ -70,6 +70,34 @@ Read: .working/colony/{project}/context.md
 
 **You are stateless. Re-read state.json before EVERY decision.**
 
+### 2.1: Critical Resume Check
+
+**If any tasks have status "running":**
+
+These tasks were interrupted mid-execution. You MUST handle them correctly:
+
+```
+⚠️ RESUME DETECTED - Task(s) in "running" state: {list}
+
+These tasks were interrupted. Spawning worker to continue/complete them.
+```
+
+**CRITICAL RULES FOR RESUME:**
+1. You MUST spawn a worker to continue/fix interrupted tasks
+2. You MUST NOT read files to see what went wrong
+3. You MUST NOT debug or fix issues yourself
+4. You MUST NOT make "quick fixes" even if you think you know the answer
+
+**Why this matters:** When resuming, you may see partial work, errors, or failures.
+The temptation to "quickly fix" something is strongest here. RESIST IT.
+Your context is fresh on resume - don't pollute it with debugging.
+
+**Resume procedure:**
+1. For each task with status "running":
+   - If running for >30 minutes: Reset to "pending" (will retry fresh)
+   - If running for <30 minutes: Spawn worker to complete it
+2. Proceed to Step 3
+
 ## Step 3: Git Pre-Flight Check
 
 **SKIP this section if `state.json.git.strategy` is `"not_applicable"`.**
@@ -269,10 +297,10 @@ REPEAT until all tasks complete/failed/blocked:
        mkdir -p .working/colony/{project}/logs
        ```
 
-    c) Build execution bundle:
+    c) Build execution bundle (MINIMAL - context is precious):
        - Read task file
        - Read context.md
-       - Read source files listed in task's "Files" section
+       - DO NOT include source file contents (worker will read them)
 
     d) Spawn worker sub-agent:
 
@@ -300,28 +328,37 @@ REPEAT until all tasks complete/failed/blocked:
 
        ## Project Context (follow these rules)
 
-       {Content of context.md}
-
-       ## Relevant Source Files
-
-       ### {filename1}
-       ```
-       {content}
-       ```
+       {Content of context.md - SUMMARIZED if >100 lines}
 
        ═══════════════════════════════════════════════════════════
 
-       Complete this task and respond with either:
+       IMPORTANT: Read any source files you need using the Read tool.
+       File paths are listed in your task's "Files" section.
 
-       DONE: {summary}
-       Files changed: {list}
-       Verification output: {test results}
+       Complete this task and respond with MINIMAL structured output:
 
-       OR
+       ```json
+       {
+         "status": "DONE",
+         "summary": "{one-line summary}",
+         "files_changed": ["path/to/file1", "path/to/file2"],
+         "log_path": ".working/colony/{project}/logs/{task-id}_LOG.md"
+       }
+       ```
 
-       STUCK: {reason}
-       Attempted: {what you tried}
-       Need: {what would unblock}
+       OR if stuck:
+
+       ```json
+       {
+         "status": "STUCK",
+         "reason": "{clear reason}",
+         "attempted": ["what you tried"],
+         "need": "{what would unblock}"
+       }
+       ```
+
+       Details go in the log file, NOT in your response.
+       Keep your response under 20 lines.
        ```
 
     e) If running multiple tasks in parallel:
@@ -337,45 +374,55 @@ REPEAT until all tasks complete/failed/blocked:
 
     **If DONE:**
 
-    Spawn inspector sub-agent:
+    Spawn inspector sub-agent (use model: "haiku" for efficiency):
 
     ```
     Task: Verify this task was completed correctly.
 
     ═══════════════════════════════════════════════════════════
-    VERIFICATION REQUEST
+    VERIFICATION REQUEST (keep context minimal)
     ═══════════════════════════════════════════════════════════
 
-    ## Logging Metadata
-
-    - **Attempt:** {attempt_number}
+    ## Task: {task-id}
     - **Log Path:** .working/colony/{project}/logs/{task-id}_LOG.md
+    - **Attempt:** {attempt_number}
 
-    You MUST append your verification results to the log above.
-    See the Verification Logging section in your instructions.
+    ## Worker Summary (DO NOT include full response)
+    - Status: DONE
+    - Summary: {worker's one-line summary}
+    - Files changed: {list from worker response}
 
-    ## Task to Verify
-    {Content of tasks/T{NNN}.md}
+    ## What to Verify
+    Read the task file: .working/colony/{project}/tasks/{task-id}.md
+    Read the execution log: .working/colony/{project}/logs/{task-id}_LOG.md
 
-    ## Worker's Claim
-    {The DONE response}
-
-    ## Acceptance Criteria
-    {From task file}
+    Then:
+    1. Run the verification command from the task file
+    2. Check each acceptance criterion
+    3. Inspect the changed files
 
     ═══════════════════════════════════════════════════════════
 
-    Run the verification command and check each criterion.
-    Respond with:
+    Respond with MINIMAL structured output:
 
-    PASS
-    Criteria verified: {evidence for each}
+    ```json
+    {
+      "result": "PASS",
+      "summary": "{one-line verification summary}"
+    }
+    ```
 
     OR
 
-    FAIL
-    Issues: {what's wrong}
-    Suggestion: {how to fix}
+    ```json
+    {
+      "result": "FAIL",
+      "issues": ["{specific issue 1}", "{specific issue 2}"],
+      "suggestion": "{actionable fix}"
+    }
+    ```
+
+    Details go in the log file. Keep response under 10 lines.
     ```
 
     - If PASS → proceed to artifact validation (5.6a)
