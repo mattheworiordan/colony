@@ -581,6 +581,289 @@ REPEAT until all tasks complete/failed/blocked:
     - Get details ("show T005 error")
     - Commit now ("commit now")
     - Show changes ("show changes")
+    - **Provide feedback** (see 5.11 below)
+
+    ┌─────────────────────────────────────────────────────────────┐
+    │  5.11: Handle User Feedback (CRITICAL)                      │
+    └─────────────────────────────────────────────────────────────┘
+
+    **PRINCIPLE: The orchestrator coordinates, it does not implement.**
+
+    When users provide feedback, you must NEVER start debugging, editing files,
+    or running builds directly. Your job is to spawn workers for that work.
+
+    This prevents context pollution - if you start implementing inline, your
+    context fills with debugging details instead of coordination state.
+
+    ### Feedback Detection
+
+    Recognize feedback that requires implementation work:
+
+    | Triggers Work | Does NOT Trigger Work |
+    |---------------|----------------------|
+    | "I get a 404" | "Looks good" |
+    | "Why is X in git?" (implies problem) | "Continue" |
+    | "This shouldn't be committed" | "Show me the diff" |
+    | "Fix X" / "Change Y" | "What does X do?" (pure info) |
+    | "There's an error when..." | "Pause" / "Stop" |
+    | "Can you also add..." | "Set concurrency to N" |
+
+    **If feedback is informational only** (e.g., "What does X do?"):
+    - Answer the question briefly
+    - Continue with execution
+
+    **If feedback requires implementation work**, proceed to the next section.
+
+    ### Feedback Aggregation
+
+    When implementation feedback is detected:
+
+    1. **Parse the feedback into discrete items:**
+       ```
+       I see feedback that needs action:
+       • 404 on dev server
+       • .next folder shouldn't be in git
+       • Conversion script lifecycle unclear
+       ```
+
+    2. **Ask if there's more:**
+       ```
+       Any other feedback to add before I proceed?
+       ```
+
+    3. **Wait for response** - user may add more items or say "that's all"
+
+    ### Size Assessment
+
+    Assess the overall scope of the feedback:
+
+    **Small task indicators:**
+    - Single config change (e.g., add line to .gitignore)
+    - One-file fix
+    - Clear, mechanical change
+    - No design decisions needed
+
+    **Large task indicators:**
+    - Multiple files involved
+    - Debugging required (root cause unclear)
+    - Design decisions needed
+    - Multiple discrete issues
+
+    ### Present Options
+
+    **For large/significant feedback:**
+
+    ```
+    📋 Feedback detected that needs action:
+    • {item 1}
+    • {item 2}
+    • {item 3}
+
+    How would you like me to handle this?
+
+    1. **Add subtasks** → I'll create T{last}.1, T{last}.2, etc., execute with full
+       worker + inspector verification, tracked in state.json
+
+    2. **Spawn worker** → One worker handles all items, inspector verifies, logs created
+    ```
+
+    **For small/trivial feedback:**
+
+    ```
+    📋 Feedback detected that needs action:
+    • {single item}
+
+    This looks like a small fix. How would you like me to handle this?
+
+    1. **Add subtask** → I'll create T{last}.1, execute with full verification
+
+    2. **Spawn worker** → One worker handles this quickly
+       - Skip inspector verification? (small fix, probably overkill)
+       - Or verify anyway? (safer)
+    ```
+
+    ### Option 1: Add Subtasks
+
+    Create formal subtask files that integrate into the execution flow.
+
+    **Subtask ID Format:** `T{parent}.{sequence}`
+    - Parent = last completed task ID (e.g., T009)
+    - Sequence = 1, 2, 3...
+    - Examples: T009.1, T009.2, T009.3
+
+    **Create subtask file:**
+
+    Write to `.working/colony/{project}/tasks/T{parent}.{seq}.md`:
+
+    ```markdown
+    # T{parent}.{seq}: {Short title from feedback}
+
+    ## Context & Why
+
+    This subtask addresses user feedback after {parent task/phase} completion.
+
+    **User's feedback:** "{exact quote from user}"
+
+    ## Acceptance Criteria
+
+    - [ ] {Derived from feedback item}
+    - [ ] Changes verified working
+
+    ## Design Intent
+
+    - Address the user's concern as stated
+    - Minimal changes to fix the issue
+    - Don't introduce new problems
+
+    ## Verification
+
+    ```bash
+    {Appropriate verification command}
+    ```
+
+    ## Files
+
+    - {Files likely to be involved, if known}
+    ```
+
+    **Update state.json:**
+
+    Add subtasks to the tasks array:
+
+    ```json
+    {
+      "id": "T009.1",
+      "name": "{title}",
+      "status": "pending",
+      "attempts": 0,
+      "depends_on": [],
+      "is_subtask": true,
+      "parent_task": "T009",
+      "created_from": "user_feedback"
+    }
+    ```
+
+    **Execution:**
+    - Subtasks run immediately (next batch)
+    - Full worker + inspector flow
+    - Logs created at `logs/T009.1_LOG.md`
+    - Shown in progress reports as subtasks
+    - Normal human checkpoint at Step 5.10 after completion
+    - User can provide more feedback, which creates more subtasks
+
+    ### Option 2: Spawn Worker
+
+    For quick handling without formal task tracking.
+
+    **Always create a log file:**
+
+    Log path: `.working/colony/{project}/logs/FEEDBACK_{timestamp}_LOG.md`
+
+    **Spawn worker with aggregated feedback:**
+
+    ```
+    Task: Address user feedback from execution checkpoint.
+
+    ═══════════════════════════════════════════════════════════
+    FEEDBACK TASK
+    ═══════════════════════════════════════════════════════════
+
+    ## Logging Metadata
+
+    - **Log Path:** .working/colony/{project}/logs/FEEDBACK_{timestamp}_LOG.md
+    - **Start Time:** {current ISO timestamp}
+
+    You MUST write an execution log to the log path above.
+
+    ## User Feedback Items
+
+    The user provided the following feedback after reviewing completed work:
+
+    1. {feedback item 1}
+    2. {feedback item 2}
+    3. {feedback item 3}
+
+    ## Your Job
+
+    1. Investigate each item
+    2. Implement fixes
+    3. Verify fixes work
+    4. Write execution log
+    5. Return DONE or STUCK
+
+    ## Project Context
+
+    {Content of context.md}
+
+    ═══════════════════════════════════════════════════════════
+
+    Complete this work and respond with:
+
+    DONE: {summary of what was fixed}
+    Files changed: {list}
+    Verification: {how you verified each fix}
+
+    OR
+
+    STUCK: {reason}
+    Attempted: {what you tried}
+    Need: {what would unblock}
+    ```
+
+    **Inspector Decision:**
+
+    - **Large feedback (default):** Always spawn inspector to verify
+    - **Small feedback (user chose to skip):** Skip inspector, trust worker result
+
+    If inspector runs, use same verification flow as regular tasks.
+
+    **After completion:**
+
+    ```
+    ✅ Feedback addressed
+
+    Items fixed:
+    • {item 1}: {how fixed}
+    • {item 2}: {how fixed}
+
+    Log: .working/colony/{project}/logs/FEEDBACK_{timestamp}_LOG.md
+
+    Please review the fixes. Options:
+    • "continue" - Resume execution
+    • "show changes" - View git diff
+    • {more feedback} - I'll handle it the same way
+    ```
+
+    **IMPORTANT:** Always pause for user review after feedback is addressed.
+    Do NOT automatically continue - the user needs to verify the fix.
+
+    ### CRITICAL: Never Implement Inline
+
+    **FORBIDDEN actions when receiving feedback:**
+    - Reading files to debug
+    - Editing files directly
+    - Running builds or tests
+    - Making "quick fixes"
+
+    **REQUIRED actions:**
+    - Parse feedback into items
+    - Assess size
+    - Present options
+    - Spawn worker(s) based on user choice
+
+    **Why this matters:**
+
+    If you debug inline, your context accumulates:
+    - File contents you read
+    - Error messages you encountered
+    - Multiple edit attempts
+    - Build outputs
+
+    After 3-4 feedback cycles, your context is polluted with implementation
+    details instead of coordination state. You'll lose track of the overall
+    project, miss dependencies, and make coordination errors.
+
+    Workers have fresh context. Use them.
 
     Then loop back to 5.1
 
@@ -844,6 +1127,10 @@ If interrupted:
 | "commit now" | Force commit of current changes |
 | "skip commit" | Skip the current phase commit |
 | "show changes" | Display git diff --stat |
+| {feedback about issues} | Triggers feedback handling (Step 5.11) |
+| "add subtasks" | When prompted, create formal subtasks |
+| "spawn worker" | When prompted, use single worker for feedback |
+| "skip inspector" | When prompted for small tasks, skip verification |
 
 ## Important Rules
 
@@ -858,6 +1145,7 @@ If interrupted:
 9. **Follow commit strategy** - phase/task/end/manual as configured (only if `git.strategy` is `"active"`)
 10. **Record commits in state.json** - for recovery and summary (only if `git.strategy` is `"active"`)
 11. **Task runner is commit exception** - explicit permission via /colony-run (only if `git.strategy` is `"active"`)
+12. **NEVER implement inline when receiving feedback** - always spawn workers (see Step 5.11)
 
 ## Critical: Artifact Validation Is Non-Negotiable
 
@@ -884,3 +1172,38 @@ You MUST generate REPORT.md (Step 7) at the end of EVERY run:
 - Even if user didn't explicitly ask for it
 
 The user should NEVER have to ask "where is the report?"
+
+## Critical: Never Implement Inline
+
+**The #3 failure mode is implementing fixes directly when receiving user feedback.**
+
+When users provide feedback that requires implementation work, you MUST:
+1. Parse the feedback into discrete items
+2. Assess the size (small vs large)
+3. Present options (add subtasks OR spawn worker)
+4. Spawn worker(s) based on user choice
+
+You MUST NOT:
+- Read files to debug the issue
+- Edit files directly
+- Run builds or tests
+- Make "quick fixes" yourself
+
+**Why this matters:**
+
+Your context is precious. It contains:
+- Project state and task status
+- Dependency relationships
+- Parallelization decisions
+- Execution history
+
+If you start debugging inline, your context fills with:
+- File contents
+- Error messages
+- Multiple edit attempts
+- Build outputs
+
+After 3-4 feedback cycles, you'll lose track of the project. Workers have
+fresh context specifically for implementation work. Use them.
+
+**The orchestrator coordinates. Workers implement.**
