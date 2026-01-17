@@ -142,17 +142,11 @@ claude --plugin-dir .claude-plugins/colony
 
 After installation, run `/help` in Claude Code — you should see the `/colony-*` commands listed.
 
-**Optional: Add CLI to PATH**
+**CLI Tool**
 
-Colony includes a CLI tool for state management. To use it from anywhere:
+Colony includes a CLI tool (`bin/colony`) for state management. The plugin commands reference it via `${CLAUDE_PLUGIN_ROOT}/bin/colony`, so no PATH setup is needed - it works automatically.
 
-```bash
-# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
-export PATH="$HOME/.claude/plugins/colony/bin:$PATH"
-
-# Or if installed locally
-export PATH="$PWD/.claude-plugins/colony/bin:$PATH"
-```
+For manual CLI usage outside of Claude Code, you can optionally add it to your PATH or create a symlink.
 
 **Community Registry**: Colony is also indexed at [claude-plugins.dev](https://claude-plugins.dev/), which automatically discovers Claude Code plugins on GitHub.
 
@@ -373,26 +367,15 @@ Colony can be configured via `~/.colony/config.json`. This file is created autom
 
 **Note:** `inherit` means the model is determined by your Claude Code session. The inspector defaults to `haiku` for efficiency since verification is simpler than implementation.
 
-### CLI Tool
+### CLI Tool (Internal)
 
-Colony includes a CLI for state management. This is used internally but also available for debugging:
+Colony includes a CLI (`bin/colony`) for internal state management. This reduces token usage by replacing JSON file reads/writes with simple shell commands.
 
+**For debugging**, you can also use it manually:
 ```bash
-# Initialize config (done automatically on first run)
-colony config init
-
-# View/modify config
-colony config get
-colony config set models.inspector sonnet
-
-# List projects
-colony state list
-
-# View project status
-colony state summary my-project
+colony state list            # List projects
+colony state summary my-proj # View status
 ```
-
-Full CLI help: `colony help`
 
 ### Concurrency
 
