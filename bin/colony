@@ -1,0 +1,598 @@
+#!/usr/bin/env bash
+#
+# Colony CLI - State and config management for Colony plugin
+# Usage: colony <command> [args]
+#
+# Commands:
+#   config init              Initialize ~/.colony/config.json with defaults
+#   config get [key]         Get config value (or all if no key)
+#   config set <key> <value> Set config value
+#   config path              Print config file path
+#
+#   state init <project>                    Initialize state.json for project
+#   state get <project> [key]               Get state value (dot notation: tasks.T001.status)
+#   state set <project> <key> <value>       Set state value
+#   state task <project> <id> <status>      Update task status (pending|running|complete|failed|blocked)
+#   state task-start <project> <id>         Mark task as running, increment attempts
+#   state task-complete <project> <id>      Mark task as complete
+#   state task-fail <project> <id> [error]  Mark task as failed with optional error
+#   state log <project> <event> [data]      Append to execution log
+#   state list                              List all projects
+#   state summary <project>                 Print project summary
+#
+#   working-dir                             Print configured working directory
+
+set -euo pipefail
+
+# Config
+CONFIG_DIR="${HOME}/.colony"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+DEFAULT_WORKING_DIR=".working"
+
+# Colors (disabled if not a terminal)
+if [[ -t 1 ]]; then
+  RED='\033[0;31m'
+  GREEN='\033[0;32m'
+  YELLOW='\033[0;33m'
+  BLUE='\033[0;34m'
+  NC='\033[0m'
+else
+  RED='' GREEN='' YELLOW='' BLUE='' NC=''
+fi
+
+# Ensure jq is available
+check_jq() {
+  if ! command -v jq &> /dev/null; then
+    echo -e "${RED}Error: jq is required but not installed.${NC}" >&2
+    echo "Install with: brew install jq (macOS) or apt-get install jq (Linux)" >&2
+    exit 1
+  fi
+}
+
+# Get working directory from config or default
+get_working_dir() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    local dir
+    dir=$(jq -r '.working_dir // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ -n "$dir" ]]; then
+      echo "$dir"
+      return
+    fi
+  fi
+  echo "$DEFAULT_WORKING_DIR"
+}
+
+# Get state file path for a project
+get_state_file() {
+  local project="$1"
+  local working_dir
+  working_dir=$(get_working_dir)
+  echo "${working_dir}/colony/${project}/state.json"
+}
+
+# Initialize config with defaults
+config_init() {
+  mkdir -p "$CONFIG_DIR"
+
+  if [[ -f "$CONFIG_FILE" ]]; then
+    echo -e "${YELLOW}Config already exists at ${CONFIG_FILE}${NC}"
+    echo "Current contents:"
+    cat "$CONFIG_FILE"
+    return 0
+  fi
+
+  cat > "$CONFIG_FILE" << 'EOF'
+{
+  "working_dir": ".working",
+  "models": {
+    "planning": "inherit",
+    "worker": "inherit",
+    "inspector": "haiku"
+  },
+  "notifications": {
+    "model_override_shown": false
+  }
+}
+EOF
+
+  echo -e "${GREEN}Created config at ${CONFIG_FILE}${NC}"
+  cat "$CONFIG_FILE"
+}
+
+# Get config value
+config_get() {
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo -e "${YELLOW}No config file. Run 'colony config init' first.${NC}" >&2
+    exit 1
+  fi
+
+  if [[ $# -eq 0 ]]; then
+    cat "$CONFIG_FILE"
+  else
+    jq -r ".$1 // empty" "$CONFIG_FILE"
+  fi
+}
+
+# Set config value
+config_set() {
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: colony config set <key> <value>" >&2
+    exit 1
+  fi
+
+  local key="$1"
+  local value="$2"
+
+  mkdir -p "$CONFIG_DIR"
+
+  # Initialize if doesn't exist
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    config_init > /dev/null
+  fi
+
+  # Handle nested keys (e.g., models.inspector)
+  local tmp
+  tmp=$(mktemp)
+
+  # Try to parse value as JSON, fallback to string
+  if echo "$value" | jq . &>/dev/null; then
+    jq ".$key = $value" "$CONFIG_FILE" > "$tmp"
+  else
+    jq ".$key = \"$value\"" "$CONFIG_FILE" > "$tmp"
+  fi
+
+  mv "$tmp" "$CONFIG_FILE"
+  echo -e "${GREEN}Set $key = $value${NC}"
+}
+
+# Initialize state for a project
+state_init() {
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: colony state init <project>" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local state_file
+  state_file=$(get_state_file "$project")
+  local state_dir
+  state_dir=$(dirname "$state_file")
+
+  mkdir -p "$state_dir"
+  mkdir -p "$state_dir/tasks"
+  mkdir -p "$state_dir/logs"
+  mkdir -p "$state_dir/resources"
+  mkdir -p "$state_dir/screenshots"
+
+  if [[ -f "$state_file" ]]; then
+    echo -e "${YELLOW}State already exists for $project${NC}"
+    return 0
+  fi
+
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  cat > "$state_file" << EOF
+{
+  "project_name": "$project",
+  "created_at": "$timestamp",
+  "updated_at": "$timestamp",
+  "total_tasks": 0,
+  "concurrency": 5,
+  "autonomous_mode": false,
+  "git": {
+    "strategy": "not_applicable"
+  },
+  "tasks": {},
+  "execution_log": []
+}
+EOF
+
+  echo -e "${GREEN}Initialized state for $project${NC}"
+  echo "$state_file"
+}
+
+# Get state value
+state_get() {
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: colony state get <project> [key]" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  if [[ $# -eq 1 ]]; then
+    cat "$state_file"
+  else
+    local key="$2"
+    jq -r ".$key // empty" "$state_file"
+  fi
+}
+
+# Set state value
+state_set() {
+  if [[ $# -lt 3 ]]; then
+    echo "Usage: colony state set <project> <key> <value>" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local key="$2"
+  local value="$3"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Try to parse value as JSON, fallback to string
+  if echo "$value" | jq . &>/dev/null; then
+    jq ".$key = $value | .updated_at = \"$timestamp\"" "$state_file" > "$tmp"
+  else
+    jq ".$key = \"$value\" | .updated_at = \"$timestamp\"" "$state_file" > "$tmp"
+  fi
+
+  mv "$tmp" "$state_file"
+}
+
+# Update task status
+state_task() {
+  if [[ $# -lt 3 ]]; then
+    echo "Usage: colony state task <project> <id> <status>" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local task_id="$2"
+  local status="$3"
+
+  state_set "$project" "tasks.\"$task_id\".status" "\"$status\""
+  echo "$task_id: $status"
+}
+
+# Mark task as started
+state_task_start() {
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: colony state task-start <project> <id>" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local task_id="$2"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  jq --arg id "$task_id" --arg ts "$timestamp" '
+    .tasks[$id].status = "running" |
+    .tasks[$id].started_at = $ts |
+    .tasks[$id].attempts = ((.tasks[$id].attempts // 0) + 1) |
+    .updated_at = $ts
+  ' "$state_file" > "$tmp"
+
+  mv "$tmp" "$state_file"
+
+  local attempts
+  attempts=$(jq -r ".tasks.\"$task_id\".attempts" "$state_file")
+  echo "$task_id: running (attempt $attempts)"
+}
+
+# Mark task as complete
+state_task_complete() {
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: colony state task-complete <project> <id>" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local task_id="$2"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  jq --arg id "$task_id" --arg ts "$timestamp" '
+    .tasks[$id].status = "complete" |
+    .tasks[$id].completed_at = $ts |
+    .updated_at = $ts
+  ' "$state_file" > "$tmp"
+
+  mv "$tmp" "$state_file"
+  echo "$task_id: complete"
+}
+
+# Mark task as failed
+state_task_fail() {
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: colony state task-fail <project> <id> [error]" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local task_id="$2"
+  local error="${3:-}"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  if [[ -n "$error" ]]; then
+    jq --arg id "$task_id" --arg ts "$timestamp" --arg err "$error" '
+      .tasks[$id].status = "failed" |
+      .tasks[$id].last_error = $err |
+      .updated_at = $ts
+    ' "$state_file" > "$tmp"
+  else
+    jq --arg id "$task_id" --arg ts "$timestamp" '
+      .tasks[$id].status = "failed" |
+      .updated_at = $ts
+    ' "$state_file" > "$tmp"
+  fi
+
+  mv "$tmp" "$state_file"
+  echo "$task_id: failed"
+}
+
+# Append to execution log
+state_log() {
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: colony state log <project> <event> [data]" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local event="$2"
+  local data="${3:-"{}"}"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  local timestamp
+  timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+  # Parse data as JSON if possible
+  local json_data
+  if echo "$data" | jq . &>/dev/null; then
+    json_data="$data"
+  else
+    json_data="{\"message\": \"$data\"}"
+  fi
+
+  jq --arg ts "$timestamp" --arg evt "$event" --argjson data "$json_data" '
+    .execution_log += [{"time": $ts, "event": $evt} + $data] |
+    .updated_at = $ts
+  ' "$state_file" > "$tmp"
+
+  mv "$tmp" "$state_file"
+}
+
+# List all projects
+state_list() {
+  local working_dir
+  working_dir=$(get_working_dir)
+  local colony_dir="${working_dir}/colony"
+
+  if [[ ! -d "$colony_dir" ]]; then
+    echo "No projects found"
+    return 0
+  fi
+
+  for dir in "$colony_dir"/*/; do
+    if [[ -d "$dir" ]]; then
+      local project
+      project=$(basename "$dir")
+      local state_file="${dir}state.json"
+
+      if [[ -f "$state_file" ]]; then
+        local total pending complete failed
+        total=$(jq -r '.total_tasks // 0' "$state_file")
+        pending=$(jq '[.tasks | to_entries[] | select(.value.status == "pending")] | length' "$state_file")
+        complete=$(jq '[.tasks | to_entries[] | select(.value.status == "complete")] | length' "$state_file")
+        failed=$(jq '[.tasks | to_entries[] | select(.value.status == "failed")] | length' "$state_file")
+
+        echo -e "${BLUE}$project${NC}: $total tasks ($complete complete, $pending pending, $failed failed)"
+      else
+        echo -e "${YELLOW}$project${NC}: no state file"
+      fi
+    fi
+  done
+}
+
+# Print project summary
+state_summary() {
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: colony state summary <project>" >&2
+    exit 1
+  fi
+
+  local project="$1"
+  local state_file
+  state_file=$(get_state_file "$project")
+
+  if [[ ! -f "$state_file" ]]; then
+    echo -e "${RED}No state file for project: $project${NC}" >&2
+    exit 1
+  fi
+
+  echo -e "${BLUE}=== $project ===${NC}"
+
+  local total
+  total=$(jq -r '.total_tasks // 0' "$state_file")
+  echo "Total tasks: $total"
+
+  # Count by status
+  jq -r '
+    .tasks | to_entries | group_by(.value.status) |
+    map({status: .[0].value.status, count: length}) |
+    .[] | "\(.status): \(.count)"
+  ' "$state_file" 2>/dev/null || echo "No tasks"
+
+  echo ""
+  echo "Tasks:"
+  jq -r '
+    .tasks | to_entries | sort_by(.key) |
+    .[] | "  \(.key): \(.value.status // "unknown")"
+  ' "$state_file" 2>/dev/null || echo "  (none)"
+}
+
+# Get model for a role (with override notification)
+get_model() {
+  if [[ $# -lt 1 ]]; then
+    echo "Usage: colony get-model <role>" >&2
+    exit 1
+  fi
+
+  local role="$1"
+
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "inherit"
+    return 0
+  fi
+
+  local model
+  model=$(jq -r ".models.$role // \"inherit\"" "$CONFIG_FILE")
+
+  # Check if we should show override notification
+  if [[ "$model" != "inherit" ]]; then
+    local shown
+    shown=$(jq -r '.notifications.model_override_shown // false' "$CONFIG_FILE")
+
+    if [[ "$shown" != "true" ]]; then
+      echo -e "${YELLOW}Note: Using $model for $role (configured in ~/.colony/config.json)${NC}" >&2
+
+      # Mark as shown
+      local tmp
+      tmp=$(mktemp)
+      jq '.notifications.model_override_shown = true' "$CONFIG_FILE" > "$tmp"
+      mv "$tmp" "$CONFIG_FILE"
+    fi
+  fi
+
+  echo "$model"
+}
+
+# Print working directory
+print_working_dir() {
+  get_working_dir
+}
+
+# Print help
+print_help() {
+  cat << 'EOF'
+Colony CLI - State and config management for Colony plugin
+
+Usage: colony <command> [args]
+
+Config Commands:
+  config init              Initialize ~/.colony/config.json with defaults
+  config get [key]         Get config value (or all if no key)
+  config set <key> <value> Set config value
+  config path              Print config file path
+
+State Commands:
+  state init <project>                    Initialize state for project
+  state get <project> [key]               Get state value (dot notation supported)
+  state set <project> <key> <value>       Set state value
+  state task <project> <id> <status>      Update task status
+  state task-start <project> <id>         Mark task running, increment attempts
+  state task-complete <project> <id>      Mark task complete
+  state task-fail <project> <id> [error]  Mark task failed
+  state log <project> <event> [data]      Append to execution log
+  state list                              List all projects
+  state summary <project>                 Print project summary
+
+Other Commands:
+  get-model <role>         Get model for role (planning|worker|inspector)
+  working-dir              Print configured working directory
+  help                     Print this help
+
+Examples:
+  colony config init
+  colony config set models.inspector haiku
+  colony state init my-project
+  colony state task-start my-project T001
+  colony state task-complete my-project T001
+  colony state summary my-project
+
+Config file: ~/.colony/config.json
+EOF
+}
+
+# Main
+check_jq
+
+case "${1:-help}" in
+  config)
+    case "${2:-}" in
+      init) config_init ;;
+      get) shift 2; config_get "$@" ;;
+      set) shift 2; config_set "$@" ;;
+      path) echo "$CONFIG_FILE" ;;
+      *) echo "Usage: colony config <init|get|set|path>" >&2; exit 1 ;;
+    esac
+    ;;
+  state)
+    case "${2:-}" in
+      init) shift 2; state_init "$@" ;;
+      get) shift 2; state_get "$@" ;;
+      set) shift 2; state_set "$@" ;;
+      task) shift 2; state_task "$@" ;;
+      task-start) shift 2; state_task_start "$@" ;;
+      task-complete) shift 2; state_task_complete "$@" ;;
+      task-fail) shift 2; state_task_fail "$@" ;;
+      log) shift 2; state_log "$@" ;;
+      list) state_list ;;
+      summary) shift 2; state_summary "$@" ;;
+      *) echo "Usage: colony state <init|get|set|task|task-start|task-complete|task-fail|log|list|summary>" >&2; exit 1 ;;
+    esac
+    ;;
+  get-model) shift; get_model "$@" ;;
+  working-dir) print_working_dir ;;
+  help|--help|-h) print_help ;;
+  *) echo "Unknown command: $1. Use 'colony help' for usage." >&2; exit 1 ;;
+esac

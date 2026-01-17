@@ -142,6 +142,18 @@ claude --plugin-dir .claude-plugins/colony
 
 After installation, run `/help` in Claude Code — you should see the `/colony-*` commands listed.
 
+**Optional: Add CLI to PATH**
+
+Colony includes a CLI tool for state management. To use it from anywhere:
+
+```bash
+# Add to your shell profile (~/.bashrc, ~/.zshrc, etc.)
+export PATH="$HOME/.claude/plugins/colony/bin:$PATH"
+
+# Or if installed locally
+export PATH="$PWD/.claude-plugins/colony/bin:$PATH"
+```
+
 **Community Registry**: Colony is also indexed at [claude-plugins.dev](https://claude-plugins.dev/), which automatically discovers Claude Code plugins on GitHub.
 
 ### Working Directory Convention
@@ -336,6 +348,51 @@ Ralph proved autonomous AI coding works. Colony makes it production-ready.
 **Recovery**: Structured state beats hope.
 
 ## Configuration
+
+Colony can be configured via `~/.colony/config.json`. This file is created automatically on first run with sensible defaults.
+
+### Config File
+
+```json
+{
+  "working_dir": ".working",
+  "models": {
+    "planning": "inherit",
+    "worker": "inherit",
+    "inspector": "haiku"
+  }
+}
+```
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `working_dir` | `.working` | Directory for Colony project files |
+| `models.planning` | `inherit` | Model for planning phase (`inherit`, `sonnet`, `opus`, `haiku`) |
+| `models.worker` | `inherit` | Model for worker agents |
+| `models.inspector` | `haiku` | Model for inspector agents |
+
+**Note:** `inherit` means the model is determined by your Claude Code session. The inspector defaults to `haiku` for efficiency since verification is simpler than implementation.
+
+### CLI Tool
+
+Colony includes a CLI for state management. This is used internally but also available for debugging:
+
+```bash
+# Initialize config (done automatically on first run)
+colony config init
+
+# View/modify config
+colony config get
+colony config set models.inspector sonnet
+
+# List projects
+colony state list
+
+# View project status
+colony state summary my-project
+```
+
+Full CLI help: `colony help`
 
 ### Concurrency
 
