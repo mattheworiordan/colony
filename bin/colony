@@ -183,6 +183,7 @@ state_init() {
   "git": {
     "strategy": "not_applicable"
   },
+  "milestones": [],
   "tasks": {},
   "execution_log": []
 }
@@ -472,12 +473,80 @@ state_summary() {
     .[] | "\(.status): \(.count)"
   ' "$state_file" 2>/dev/null || echo "No tasks"
 
+  # Show milestones if present
+  local milestone_count
+  milestone_count=$(jq '.milestones | length' "$state_file" 2>/dev/null || echo "0")
+  if [[ "$milestone_count" -gt 0 ]]; then
+    echo ""
+    echo "Milestones:"
+    jq -r '
+      .milestones[] | "  \(.id): \(.name) [\(.status // "pending")] - \(.checkpoint)"
+    ' "$state_file" 2>/dev/null
+  fi
+
   echo ""
   echo "Tasks:"
   jq -r '
     .tasks | to_entries | sort_by(.key) |
     .[] | "  \(.key): \(.value.status // "unknown")"
   ' "$state_file" 2>/dev/null || echo "  (none)"
+
+  # Context-aware reminders
+  print_reminders "$state_file"
+}
+
+# Print context-aware reminders based on current state
+print_reminders() {
+  local state_file="$1"
+  local reminders=()
+
+  # Check autonomous mode first
+  local autonomous
+  autonomous=$(jq -r '.autonomous_mode // false' "$state_file")
+
+  # Check if at milestone boundary (only remind to ask in non-autonomous mode)
+  local pending_milestone
+  pending_milestone=$(jq -r '
+    .milestones[] | select(.status == "pending") |
+    select(
+      .tasks as $tasks |
+      all($tasks[]; . as $t | $root.tasks[$t].status == "complete")
+    ) | .id
+  ' "$state_file" 2>/dev/null | head -1)
+
+  if [[ -n "$pending_milestone" && "$pending_milestone" != "null" ]]; then
+    if [[ "$autonomous" == "false" ]]; then
+      reminders+=("Milestone $pending_milestone complete - ASK user for approval before continuing")
+    else
+      reminders+=("Milestone $pending_milestone complete - logging and continuing (autonomous mode)")
+    fi
+  fi
+
+  # Non-autonomous mode general reminder
+  if [[ "$autonomous" == "false" ]]; then
+    reminders+=("Non-autonomous: create subtasks for ALL feedback (no quick fixes)")
+  fi
+
+  # Check for recent feedback in log (last 5 entries)
+  local recent_feedback
+  recent_feedback=$(jq -r '.execution_log[-5:][] | select(.event == "feedback_subtask_created") | .feedback' "$state_file" 2>/dev/null | head -1)
+  if [[ -z "$recent_feedback" ]]; then
+    # No recent feedback subtasks - remind about the rule
+    local has_feedback_events
+    has_feedback_events=$(jq '.execution_log | map(select(.event | startswith("feedback"))) | length' "$state_file" 2>/dev/null)
+    if [[ "$has_feedback_events" == "0" ]]; then
+      reminders+=("Remember: ALL user feedback must create subtasks (not quick fixes)")
+    fi
+  fi
+
+  # Print reminders if any
+  if [[ ${#reminders[@]} -gt 0 ]]; then
+    echo ""
+    echo -e "${YELLOW}--- REMINDERS ---${NC}"
+    for reminder in "${reminders[@]}"; do
+      echo -e "${YELLOW}• $reminder${NC}"
+    done
+  fi
 }
 
 # Get model for a role (with override notification)

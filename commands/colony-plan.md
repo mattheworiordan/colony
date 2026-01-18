@@ -1,7 +1,7 @@
 ---
 name: colony-plan
 description: Plan tasks from a brief - interactive task decomposition
-version: 1.1.0
+version: 1.2.0
 status: active
 
 # Claude Code command registration
@@ -93,7 +93,41 @@ Identify:
 - Tasks that must serialize (shared resources, dependencies)
 - Uncertain cases (ask user)
 
-## Step 7: Create Project
+## Step 7: Identify Milestones
+
+Milestones are natural review points where work can be paused, reviewed, and approved before continuing. They help break large projects into reviewable chunks.
+
+**Auto-detect milestones from:**
+- Phases explicitly mentioned in brief ("Phase 1", "Stage 1", "Step 1")
+- Logical boundaries (infrastructure → implementation → testing)
+- Git strategy hints (if brief mentions multiple PRs or branches)
+- Task dependencies that create natural groupings
+
+**Milestone structure:**
+```json
+{
+  "id": "M1",
+  "name": "Infrastructure Setup",
+  "tasks": ["T001", "T002", "T003"],
+  "checkpoint": "review"
+}
+```
+
+**Checkpoint types:**
+- `review` (default) - Pause for human approval before continuing
+- `commit` - Auto-commit at milestone boundary, then continue
+- `branch` - Create new branch for next milestone
+- `pr` - Create PR for completed milestone
+
+**Behavior:**
+- If milestones are obvious from brief: state them and proceed (user can challenge)
+- If milestones are unclear: suggest milestones and confirm
+- If brief is small (<10 tasks): single milestone is fine
+- Don't over-ask - let user challenge after if they disagree
+
+**Default checkpoint:** `review` (pause and ask for approval in non-autonomous mode)
+
+## Step 8: Create Project
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state init {project-name}
@@ -109,7 +143,7 @@ This creates:
 └── screenshots/
 ```
 
-## Step 8: Write Context File
+## Step 9: Write Context File
 
 Write `.working/colony/{project}/context.md`:
 
@@ -127,6 +161,12 @@ Captured: {timestamp}
 ## Verification Type
 {code-only | visual | mixed}
 
+## Milestones
+| ID | Name | Tasks | Checkpoint |
+|----|------|-------|------------|
+| M1 | {name} | T001-T003 | review |
+| M2 | {name} | T004-T007 | review |
+
 ## Project Rules
 {From CLAUDE.md if exists}
 
@@ -136,9 +176,15 @@ Captured: {timestamp}
 
 ## Tech Stack
 {From package.json, etc.}
+
+## Decisions Log
+{Orchestrator will append decisions here during execution}
+
+## Feedback History
+{Orchestrator will append user feedback and resulting subtasks here}
 ```
 
-## Step 9: Decompose into Tasks
+## Step 10: Decompose into Tasks
 
 <critical>
 Each task file must be SELF-CONTAINED. Workers have NO memory of:
@@ -207,16 +253,19 @@ pending
 {setup | independent | tests-browser | etc.}
 ```
 
-## Step 10: Update State
+## Step 11: Update State
 
 ```bash
 # Add each task to state
-${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'tasks.T001' '{"status":"pending","attempts":0}'
-${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'tasks.T002' '{"status":"pending","attempts":0}'
+${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'tasks.T001' '{"status":"pending","attempts":0,"milestone":"M1"}'
+${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'tasks.T002' '{"status":"pending","attempts":0,"milestone":"M1"}'
 # ...
 
 # Update total
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} total_tasks {count}
+
+# Set milestones
+${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'milestones' '[{"id":"M1","name":"{name}","tasks":["T001","T002","T003"],"checkpoint":"review","status":"pending"},{"id":"M2","name":"{name}","tasks":["T004","T005"],"checkpoint":"review","status":"pending"}]'
 
 # Set git config if applicable
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'git.strategy' '"active"'
@@ -224,31 +273,40 @@ ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'git.branch' '"{branch-name
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'git.commit_strategy' '"phase"'
 ```
 
-## Step 11: Copy Brief
+## Step 12: Copy Brief
 
 ```bash
 cp {brief-path} .working/colony/{project}/resources/original-brief.md
 ```
 
-## Step 12: Summary
+## Step 13: Summary
 
 ```markdown
 ## Project Created: {project-name}
 
 Location: .working/colony/{project}/
 Tasks: {count}
+Milestones: {milestone_count}
 Type: {implementation | research}
+
+### Milestones
+| Milestone | Tasks | Checkpoint |
+|-----------|-------|------------|
+| M1: {name} | T001-T003 | review |
+| M2: {name} | T004-T007 | review |
 
 ### Execution Plan
 
-**Phase 1 - Setup (serial):**
+**M1 - {name}:**
 - T001: {name}
+- T002, T003 (parallel)
 
-**Phase 2 - Main Work (parallel):**
-- T002, T003, T004
+**M2 - {name}:**
+- T004: {name}
+- T005, T006, T007 (parallel)
 
 ### Next Steps
-1. Review: `ls .working/colony/{project}/tasks/`
-2. Run: `/colony-run`
-3. Autonomous: `/colony-run autonomous`
+1. Review tasks: `ls .working/colony/{project}/tasks/`
+2. Run: `/colony-run` (pauses at each milestone for review)
+3. Autonomous: `/colony-run autonomous` (no pauses)
 ```

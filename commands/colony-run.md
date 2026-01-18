@@ -1,11 +1,11 @@
 ---
 name: colony-run
 description: Execute tasks with smart parallelization and verification
-version: 1.1.0
+version: 1.2.0
 status: active
 
 # Claude Code command registration
-allowed-tools: Read, Write, Edit, Bash, Task, Grep, Glob, AskUserQuestion
+allowed-tools: Read, Write, Bash, Task, Grep, Glob, AskUserQuestion
 ---
 
 # Run Tasks
@@ -268,6 +268,53 @@ This round:
 Next: T006, T007 (ready)
 ```
 
+### 5.8a: Milestone Checkpoint
+
+**Check if milestone complete:**
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/colony state get {project} milestones
+```
+
+If all tasks in current milestone are complete:
+
+1. **Log the decision:**
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "milestone_complete" '{"milestone": "M1", "tasks_completed": 3}'
+```
+
+2. **Mark milestone complete:**
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'milestones[0].status' '"complete"'
+```
+
+3. **Execute checkpoint based on type:**
+
+**Principle:** Autonomous mode skips human approval, not verification. Inspector verification always happens. The difference is whether we pause for user confirmation.
+
+| Checkpoint | Autonomous Mode | Non-Autonomous Mode |
+|------------|-----------------|---------------------|
+| `review` | Log and continue | **PAUSE** - Ask user to approve |
+| `commit` | Auto-commit, continue | Auto-commit, continue |
+| `branch` | Create branch, continue | Create branch, ask to continue |
+| `pr` | Log for later, continue | Create PR, pause |
+
+**Non-autonomous mode (default):**
+
+```
+═══════════════════════════════════════════════════════════════
+MILESTONE COMPLETE: M1 - Infrastructure Setup
+═══════════════════════════════════════════════════════════════
+
+Tasks completed: T001, T002, T003 (all passed)
+
+Ready to proceed to M2 - Core Implementation?
+```
+
+Use AskUserQuestion to get explicit approval before continuing.
+
+**Autonomous mode:** Log completion, proceed to next milestone automatically.
+
 ### 5.9: Git Commit (if applicable)
 
 Skip if `git.strategy == "not_applicable"`.
@@ -284,18 +331,53 @@ Based on `commit_strategy`:
 
 | Category | Examples | Action |
 |----------|----------|--------|
-| A: Info question | "What does X do?" | Answer, continue |
-| B: Command | "pause", "set concurrency 3" | Execute, continue |
-| C: Implementation feedback | "I get 404", "Fix X" | **Go to 5.11** |
+| A: Info question | "What does X do?", "Show status" | Answer briefly, continue |
+| B: Command | "pause", "set concurrency 3", "skip T005" | Execute command, continue |
+| C: Implementation | "I get 404", "Fix X", "This shouldn't be committed", "Add Y to gitignore" | **STOP → Go to 5.11** |
 
 <critical>
-If you're about to read a file or debug an issue, STOP.
-You are in Category C. Spawn a worker instead.
+SELF-CHECK before responding:
+
+Are you about to:
+- Read a file to understand an issue?
+- Run a command to debug something?
+- Make a "quick" edit?
+- Investigate an error?
+
+If YES to any: YOU ARE IN CATEGORY C.
+Stop immediately. Go to Step 5.11. Spawn a worker.
 </critical>
 
 ### 5.11: Handle User Feedback
 
-**This is where you typically violate principles. Follow exactly.**
+```
+═══════════════════════════════════════════════════════════════
+!! THIS IS THE STEP WHERE YOU ALWAYS VIOLATE THE RULES
+!! READ EVERY WORD BEFORE RESPONDING
+═══════════════════════════════════════════════════════════════
+```
+
+**WHY THIS MATTERS:**
+
+Your context is precious. Right now it contains:
+  + Project state and task dependencies
+  + Execution history and parallelization decisions
+  + Git strategy and commit tracking
+
+If you implement inline, your context fills with:
+  - File contents (hundreds of lines)
+  - Error messages and stack traces
+  - Multiple edit attempts
+
+After 3-4 feedback cycles, you'll lose track of the project.
+Workers have FRESH context. They're designed for implementation.
+You're designed for coordination. Stay in your lane.
+
+```
+═══════════════════════════════════════════════════════════════
+```
+
+**The procedure:**
 
 1. **Parse feedback into items:**
    ```
@@ -306,13 +388,32 @@ You are in Category C. Spawn a worker instead.
 
 2. **Ask if more:** "Any other feedback?"
 
-3. **Present options:**
-   - **Add subtasks** (T009.1, T009.2) - full verification
-   - **Spawn worker** - quick fix, optional verification
+3. **Create subtasks for EVERY item:**
 
-4. **Spawn worker(s)** based on choice. NEVER implement yourself.
+   Each feedback item becomes a formal subtask with full verification:
+   - ID: `T{last}.{sequence}` (e.g., T009.1, T009.2)
+   - Full task structure (context, criteria, verification)
+   - Worker + Inspector flow
+   - Logged in state.json
+
+   ```bash
+   # Create subtask file
+   # Write to .working/colony/{project}/tasks/T009.1.md
+
+   # Add to state
+   ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'tasks.T009.1' '{"status":"pending","attempts":0,"is_subtask":true,"parent":"T009","created_from":"user_feedback"}'
+
+   # Log the decision
+   ${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "feedback_subtask_created" '{"feedback": "add .next to gitignore", "subtask": "T009.1"}'
+   ```
+
+4. **Execute subtasks:** Run through normal worker + inspector flow.
 
 5. **After completion:** Pause for user review.
+
+**No exceptions. No shortcuts.**
+
+Even in autonomous mode, feedback creates subtasks with full worker + inspector verification. Autonomous mode skips human approval pauses, not bot verification.
 
 ```
 END REPEAT
@@ -344,11 +445,33 @@ Write to `.working/colony/{project}/REPORT.md`:
 Generated: {timestamp}
 Outcome: {COMPLETE|PARTIAL|FAILED}
 Tasks: {passed} passed, {failed} failed, {blocked} blocked
+Milestones: {completed}/{total}
+
+## Milestones
+| Milestone | Status | Tasks |
+|-----------|--------|-------|
+| M1: {name} | complete | T001-T003 |
+| M2: {name} | partial | T004-T007 |
 
 ## Results by Task
 | Task | Status | Attempts |
 |------|--------|----------|
 ...
+
+## Decisions Made
+{From execution_log, filtered for decision events}
+
+| Time | Type | Decision | Details |
+|------|------|----------|---------|
+| 14:30 | parallelization | T001+T002 parallel | No file conflicts |
+| 15:00 | feedback | Created T009.1 | User: "add .next to gitignore" |
+| 15:30 | milestone | M1 approved | User confirmed |
+
+## Feedback Addressed
+| Feedback | Subtask | Status |
+|----------|---------|--------|
+| "add .next to gitignore" | T009.1 | complete |
+| "404 on dev server" | T009.2 | complete |
 
 ## Findings
 ### Critical Issues
@@ -384,3 +507,6 @@ If interrupted, re-run `/colony-run`. Tasks "running" >30 min reset to pending.
 4. Re-read state before each iteration
 5. Ask when parallelization uncertain
 6. **NEVER implement inline** - spawn workers
+7. **Feedback = subtask** - Every feedback item becomes a formal subtask, always verified
+8. **Milestone checkpoints** - Pause and ask for approval at milestone boundaries (unless autonomous)
+9. **Log decisions** - All parallelization, feedback, and checkpoint decisions logged to execution_log
