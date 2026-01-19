@@ -1,5 +1,132 @@
 # Changelog
 
+## v1.6.0 (2026-01-20)
+
+### Summary
+
+**Stateless orchestrator + compound engineering.** Prevents context drift with stateless execution loop, fixes orchestrator delegation bug, and adds Ralph Loop-inspired compound learning features (LEARNINGS.md, git history, richer logs).
+
+### Fix: Remove Orchestrator Delegation (Critical)
+
+**The bug:** When `orchestrator` was set to "sonnet" or "haiku", the orchestrator would delegate to a sub-agent via `Task()`. But sub-agents cannot spawn their own sub-agents (nested Task limitation), so the delegated orchestrator couldn't spawn workers.
+
+**The fix:**
+- Orchestrator now ALWAYS runs in-session (no delegation)
+- Default `orchestrator` config changed from "sonnet" to "inherit"
+- Step 0.5 simplified - no more delegation logic
+- The "orchestrator" model config is deprecated and ignored
+
+### Fix: CLI `next-batch` jq Error
+
+Fixed jq error in `colony next-batch` command:
+```
+jq: error: $root is not defined at <top-level>
+```
+
+The jq query was referencing `$root` without defining it first. Added `. as $root |` to capture the root object.
+
+### New: Compound Engineering Features
+
+Inspired by the [Ralph Loop pattern](https://ghuntley.com/loop/) and [compound engineering](https://www.vincirufus.com/posts/ralph-loop-compound-engineering-future-software-development/), Colony now accumulates learnings across tasks:
+
+**1. LEARNINGS.md - Accumulated Project Knowledge**
+
+Workers and inspectors can now report learnings (patterns, conventions, gotchas). These are appended to `.working/colony/{project}/LEARNINGS.md` and fed to future workers:
+
+```markdown
+# Project Learnings
+- Uses zod for validation (T001)
+- Auth middleware pattern in middleware/ (T003)
+- Must run build before tests (T002 failure)
+```
+
+**2. Git History in Worker Context**
+
+Workers now receive recent git history to understand what changed:
+```
+## Recent Git History (for context)
+abc123 feat: add user model
+def456 fix: handle null in parser
+```
+
+**3. Richer Execution Logs**
+
+Task completion now logs more detail for debugging and learning:
+```json
+{
+  "event": "task_complete",
+  "task": "T001",
+  "summary": "Created auth module with JWT support",
+  "files_changed": ["src/auth.ts"],
+  "learnings": ["Project uses zod for validation"]
+}
+```
+
+**4. Persistent Task Logs**
+
+Workers and inspectors now write to `.working/colony/{project}/logs/{task-id}_LOG.md`, creating a permanent record of what was done and learned.
+
+**Why this matters:** Each task makes future tasks easier by documenting patterns and avoiding repeated mistakes. This is the core principle of compound engineering - learnings accumulate rather than being lost between agent invocations.
+
+### Architecture: Stateless Execution Loop
+
+The orchestrator no longer relies on in-context memory between iterations:
+
+```
+BEFORE: Read state once → Execute many tasks → Hope rules aren't forgotten
+AFTER:  Each iteration → Read fresh state → Rule echo → Execute → Repeat
+```
+
+**Key changes:**
+
+1. **Step 5.0: Loop Start** - Every iteration re-reads state from CLI
+   ```bash
+   ${CLAUDE_PLUGIN_ROOT}/bin/colony state summary {project}
+   task_stats=$(... | jq '{complete: ..., failed: ..., ...}')
+   ```
+
+2. **Step 5.0a: Rule Echo** - Every 3 completed tasks, core rules are re-stated:
+   ```
+   ════════════════════════════════════════════════════════
+   RULE REFRESH (6 tasks complete)
+   YOU ARE AN ORCHESTRATOR, NOT A WORKER.
+   • Read state → Pick task → Spawn worker → Process result
+   • NEVER implement inline, NEVER debug, NEVER "quick fix"
+   ════════════════════════════════════════════════════════
+   ```
+
+3. **Step 5.1: CLI-Driven Parallelization** - Uses `colony next-batch` to get ready tasks:
+   ```bash
+   ready_tasks=$(${CLAUDE_PLUGIN_ROOT}/bin/colony next-batch {project} {concurrency})
+   ```
+   CLI handles dependency resolution, serial groups, and file conflicts. Orchestrator just executes.
+
+### Why This Matters
+
+| Problem | Solution |
+|---------|----------|
+| Orchestrator forgets rules after many tasks | Rule echo every 3 tasks |
+| Orchestrator relies on stale memory | Re-read state every iteration |
+| Orchestrator makes bad parallelization calls | CLI decides via `next-batch` |
+| Context accumulates with file contents | Stateless = context stays clean |
+
+### Tradeoffs
+
+- **Slightly more CLI calls** - Acceptable for correctness
+- **Less contextual intelligence** - Can't reason "I remember why I did X"
+- **State.json more critical** - Single source of truth
+
+The tradeoff is worthwhile: rule adherence is critical, contextual intelligence is nice-to-have.
+
+### Mitigations Built-In
+
+- **State validation** at loop start catches stuck tasks
+- **Parallelization via CLI** preserves intelligent batching
+- **Retry logic preserved** - Same thresholds and circuit breakers
+- **Logging unchanged** - Full decision trail in execution_log
+
+---
+
 ## v1.5.1 (2026-01-19)
 
 ### Summary
@@ -23,7 +150,7 @@ The `/colony-patrol` command and supporting scripts have been removed:
 - Use "Continue with fresh context" at milestone checkpoints when you notice drift
 - For very long projects, consider breaking into smaller independent colonies
 
-### New: Context Health Check (Step 5.12)
+### New: Context Health Check (Step 5.10)
 
 Orchestrator now monitors its own context health and suggests restart when needed:
 

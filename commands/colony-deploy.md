@@ -1,7 +1,7 @@
 ---
 name: colony-deploy
 description: Deploy workers with smart parallelization and verification
-version: 1.5.1
+version: 1.6.0
 status: active
 
 # Claude Code command registration
@@ -39,16 +39,14 @@ Your context is precious. Spawn workers for implementation. Always.
 [[ -x "${CLAUDE_PLUGIN_ROOT}/bin/colony" ]] && echo "colony CLI ready" || echo "ERROR: colony CLI not found"
 ```
 
-## Step 0.5: Check Orchestrator Delegation
+## Step 0.5: Get Model Configuration
 
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/colony config init 2>/dev/null || true
-orchestrator_model=$(${CLAUDE_PLUGIN_ROOT}/bin/colony get-model orchestrator)
 worker_model=$(${CLAUDE_PLUGIN_ROOT}/bin/colony get-model worker)
 inspector_model=$(${CLAUDE_PLUGIN_ROOT}/bin/colony get-model inspector)
 
 # Get session model from Claude Code settings (for worker inheritance)
-# Model is always in ~/.claude/settings.json (main Claude config, not CLAUDE_CONFIG_DIR)
 session_model=$(jq -r '.model // "sonnet"' "$HOME/.claude/settings.json" 2>/dev/null || echo "sonnet")
 ```
 
@@ -56,43 +54,16 @@ session_model=$(jq -r '.model // "sonnet"' "$HOME/.claude/settings.json" 2>/dev/
 - If `worker_model` is "inherit" → use `session_model` (e.g., "opus")
 - Otherwise use the explicit `worker_model`
 
-**Delegation decision:**
+<critical>
+ORCHESTRATOR ALWAYS RUNS IN-SESSION.
 
-| orchestrator | Action |
-|--------------|--------|
-| `inherit` | Run in session (no delegation) → Step 1 |
-| `haiku`/`sonnet`/`opus` | Delegate to sub-orchestrator → spawn below |
+Do NOT delegate to a sub-orchestrator via Task(). Sub-agents cannot spawn
+their own sub-agents, so a delegated orchestrator cannot spawn workers.
 
-**If delegating** (orchestrator is NOT "inherit"):
+The "orchestrator" config setting is deprecated and ignored.
+</critical>
 
-Spawn a sub-agent with the orchestrator model. Pass resolved worker model explicitly:
-
-```
-Task(
-  subagent_type: "general-purpose",
-  model: "{orchestrator_model}",  // e.g., "haiku"
-  prompt: "Run Colony orchestration for project: {$ARGUMENTS}
-
-  CRITICAL: Read and follow the FULL instructions in:
-  {CLAUDE_PLUGIN_ROOT}/commands/colony-deploy.md
-
-  Start from Step 1 (skip Step 0 and 0.5 - you are the delegated orchestrator).
-
-  Configuration for this run:
-  - Worker model: {resolved_worker_model} (e.g., opus)
-  - Inspector model: {inspector_model} (e.g., haiku)
-  - CLI path: {CLAUDE_PLUGIN_ROOT}/bin/colony
-
-  Follow the milestone checkpoint format EXACTLY as specified in the prompt file.
-  This includes: progress bars, 'How to verify' sections, proposed commits, etc."
-)
-```
-
-Then STOP - the sub-agent handles everything. Return its result to the user.
-
-**If NOT delegating** (orchestrator=inherit):
-
-Continue to Step 1 and run orchestration directly in this session.
+Continue to Step 1.
 
 ## Step 1: Initialize
 
@@ -154,46 +125,96 @@ Autonomous behavior:
 - No pause for human checkpoints
 - Max 3 retries per task, stop if >50% fail
 
-## Step 5: Execution Loop
+## Step 5: Execution Loop (STATELESS)
+
+<critical>
+THIS LOOP IS STATELESS. Every iteration:
+1. Read fresh state from CLI (don't trust memory)
+2. Decide action based ONLY on state
+3. Execute action
+4. Loop
+
+DO NOT rely on memory from previous iterations.
+The CLI is your source of truth - re-read it every time.
+</critical>
 
 ```
 REPEAT until all tasks complete/failed/blocked:
 ```
 
-### 5.1: Get Current State
+### 5.0: Loop Start (EVERY ITERATION)
+
+**Always re-read state at the start of each iteration:**
 
 ```bash
+# FRESH STATE - don't rely on what you remember
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state summary {project}
+
+# Get counts for decisions
+task_stats=$(${CLAUDE_PLUGIN_ROOT}/bin/colony state get {project} tasks | jq '{
+  complete: [to_entries[] | select(.value.status == "complete")] | length,
+  failed: [to_entries[] | select(.value.status == "failed")] | length,
+  blocked: [to_entries[] | select(.value.status == "blocked")] | length,
+  pending: [to_entries[] | select(.value.status == "pending")] | length,
+  running: [to_entries[] | select(.value.status == "running")] | length
+}')
+completed_count=$(echo "$task_stats" | jq '.complete')
 ```
 
-### 5.2: Identify Ready Tasks
+**State validation:** If `running` > 0 and they've been running >30 min, reset them:
+```bash
+# Check for stuck tasks (running >30 min) - handled by Resume Check in Step 2.1
+```
 
-A task is READY when:
-- status = "pending"
-- All tasks in depends_on are "complete"
-- Not blocked by failed dependency
+### 5.0a: Rule Echo (Every 3 Tasks)
 
-### 5.3: Check Completion
+**If `completed_count` is a multiple of 3 (3, 6, 9, ...), echo the core rule:**
 
-If no READY tasks:
-- All complete → Print success, go to Step 6
-- Some failed/blocked → Print summary, go to Step 6
-- Pending but blocked → Explain, go to Step 6
+```
+════════════════════════════════════════════════════════════════
+RULE REFRESH (${completed_count} tasks complete)
 
-### 5.4: Plan Parallel Execution
+YOU ARE AN ORCHESTRATOR, NOT A WORKER.
+• Read state → Pick task → Spawn worker → Process result → Loop
+• NEVER implement inline, NEVER debug, NEVER "quick fix"
+• If you're about to read code or run tests: STOP → spawn worker
 
-Select up to `{concurrency}` ready tasks.
+Your context should stay clean for coordination.
+Workers have fresh context for implementation.
+════════════════════════════════════════════════════════════════
+```
 
-**Parallelization rules:**
-- Same serial group → one at a time
-- Different/parallel groups → can run together
-- Browser tests → usually serialize
-- Same file modifications → serialize
-- **When uncertain, ASK**
+### 5.1: Get Ready Tasks (CLI decides)
 
-### 5.5: Execute Task Batch
+```bash
+ready_tasks=$(${CLAUDE_PLUGIN_ROOT}/bin/colony next-batch {project} {concurrency})
+```
 
-For each task:
+This returns space-separated task IDs that are ready. **CLI handles parallelization logic** - it considers:
+- Dependencies (only returns tasks with deps met)
+- Serial groups (won't return conflicting tasks)
+- File conflicts (encodes in task definitions)
+
+**You just execute what it gives you.** Don't second-guess the CLI.
+
+### 5.2: Check Completion
+
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/colony is-complete {project}
+```
+
+Returns `true` or `false`.
+
+- **If `true` or `ready_tasks` is empty:** Check why
+  - All complete → Step 6
+  - Some failed/blocked → Step 6 with summary
+  - Pending but deps not met → Wait or Step 6
+
+- **If `false` and tasks ready:** Continue to 5.3
+
+### 5.3: Execute Task Batch
+
+For each task in `ready_tasks`:
 
 a) **Mark running and get model:**
 ```bash
@@ -202,7 +223,21 @@ worker_model=$(${CLAUDE_PLUGIN_ROOT}/bin/colony get-model worker)
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "task_started" '{"task": "{task-id}", "model": "'"$worker_model"'"}'
 ```
 
-b) **Spawn worker sub-agent** with `subagent_type="colony:worker"` and model from config:
+b) **Get git context for worker:**
+```bash
+# Recent commits for context (helps worker understand recent changes)
+git_history=$(git log --oneline -10 2>/dev/null || echo "No git history")
+
+# Check if LEARNINGS.md exists
+learnings_file=".working/colony/{project}/LEARNINGS.md"
+if [[ -f "$learnings_file" ]]; then
+  learnings=$(cat "$learnings_file")
+else
+  learnings="No learnings yet."
+fi
+```
+
+c) **Spawn worker sub-agent** with `subagent_type="colony:worker"` and model from config:
 
 ```
 Execute this task following the project context.
@@ -221,18 +256,27 @@ TASK BUNDLE
 ## Project Context (condensed if >100 lines)
 {Content of context.md}
 
+## Recent Git History (for context)
+{git_history}
+
+## Project Learnings (patterns discovered by previous tasks)
+{learnings}
+
 ═══════════════════════════════════════════════════════════
+
+IMPORTANT: Write your work log to the Log Path above using the Write tool.
+Include: what you did, files changed, any patterns or conventions you discovered.
 
 Read source files using Read tool. Complete and respond:
 
-{"status": "DONE", "summary": "...", "files_changed": [...]}
+{"status": "DONE", "summary": "...", "files_changed": [...], "learnings": ["pattern or convention discovered"]}
 or
 {"status": "STUCK", "reason": "...", "attempted": [...], "need": "..."}
 ```
 
 d) If parallel batch: spawn all workers together, wait for all.
 
-### 5.6: Process Results
+### 5.4: Process Results
 
 **Parallel inspection:** If multiple workers completed in a parallel batch, spawn their inspectors in parallel too. This is safe because:
 - Inspectors are read-only (verify, don't modify code)
@@ -342,21 +386,43 @@ RUN IT and check the result.
 IMPORTANT: Only verify files listed above. Ignore other files that may have been
 created by parallel tasks - they will be verified separately.
 
+AFTER VERIFICATION: Append your findings to the task log file:
+.working/colony/{project}/logs/{task-id}_LOG.md
+
+Include verification results and any learnings (patterns, conventions, gotchas).
+
 Respond:
-{"result": "PASS", "summary": "..."}
+{"result": "PASS", "summary": "...", "learnings": ["any patterns or conventions discovered"]}
 or
-{"result": "FAIL", "issues": [...], "suggestion": "..."}
+{"result": "FAIL", "issues": [...], "suggestion": "...", "learnings": ["what was learned from the failure"]}
 ```
 
-**If PASS:** Validate artifacts exist, then:
+**If PASS:** Validate artifacts exist, append learnings, then mark complete:
+
 ```bash
+# Append learnings to LEARNINGS.md (compound engineering)
+learnings_file=".working/colony/{project}/LEARNINGS.md"
+if [[ ! -f "$learnings_file" ]]; then
+  echo "# Project Learnings" > "$learnings_file"
+  echo "" >> "$learnings_file"
+  echo "Patterns, conventions, and gotchas discovered during execution." >> "$learnings_file"
+  echo "" >> "$learnings_file"
+fi
+
+# Append learnings from worker and inspector (if any)
+# Format: - {learning} (T001)
+for learning in {worker_learnings} {inspector_learnings}; do
+  echo "- $learning ({task-id})" >> "$learnings_file"
+done
+
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state task-complete {project} {task-id}
-${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "task_complete" '{"task": "{task-id}", "worker_model": "'"$worker_model"'", "inspector_model": "'"$inspector_model"'"}'
+${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "task_complete" '{"task": "{task-id}", "summary": "{summary}", "files_changed": {files_list}, "learnings": {learnings_list}, "worker_model": "'"$worker_model"'", "inspector_model": "'"$inspector_model"'"}'
 ```
 
 **If FAIL:**
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state task-fail {project} {task-id} "{error}"
+${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "task_failed" '{"task": "{task-id}", "issues": {issues_list}, "suggestion": "{suggestion}"}'
 ```
 
 ### Retry and Give-Up Logic
@@ -410,7 +476,7 @@ Both consume retry attempts, but STUCK may indicate the task definition needs re
 - attempts < 3 → pending, retry with more context
 - attempts >= 3 → blocked, ask user "Is the task definition correct?"
 
-### 5.6a: Artifact Validation
+### 5.4a: Artifact Validation
 
 **Before marking complete, verify artifacts exist:**
 
@@ -425,14 +491,14 @@ ls .working/colony/{project}/screenshots/{prefix}_*.png | wc -l
 
 If missing: DO NOT mark complete, retry task.
 
-### 5.7: Update Blocked Dependencies
+### 5.5: Update Blocked Dependencies
 
 For tasks depending on failed/blocked task:
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state task {project} {dependent-id} blocked
 ```
 
-### 5.8: Progress Report
+### 5.6: Progress Report
 
 After each batch, show progress with a proportional bar:
 
@@ -452,7 +518,7 @@ Next: T006, T007 (ready)
 - 60% (12/20) → `████████████░░░░░░░░` (12 filled, 8 empty)
 - 100% → `████████████████████`
 
-### 5.8a: Milestone Checkpoint
+### 5.6a: Milestone Checkpoint
 
 **Check if milestone complete:**
 
@@ -565,7 +631,7 @@ Then exit (return control to spawned agent).
 
 **Autonomous mode:** Log completion, proceed to next milestone automatically.
 
-### 5.9: Git Commit (if applicable)
+### 5.7: Git Commit (if applicable)
 
 Skip if `git.strategy == "not_applicable"`.
 
@@ -585,7 +651,7 @@ Tasks: {list of completed tasks}
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 ```
 
-### 5.10: Checkpoint
+### 5.8: User Checkpoint
 
 **Classify user response:**
 
@@ -593,7 +659,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>"
 |----------|----------|--------|
 | A: Info question | "What does X do?", "Show status" | Answer briefly, continue |
 | B: Command | "pause", "set concurrency 3", "skip T005" | Execute command, continue |
-| C: Implementation | "I get 404", "Fix X", "This shouldn't be committed", "Add Y to gitignore" | **STOP → Go to 5.11** |
+| C: Implementation | "I get 404", "Fix X", "This shouldn't be committed", "Add Y to gitignore" | **STOP → Go to 5.9** |
 
 <critical>
 SELF-CHECK before responding:
@@ -605,10 +671,10 @@ Are you about to:
 - Investigate an error?
 
 If YES to any: YOU ARE IN CATEGORY C.
-Stop immediately. Go to Step 5.11. Spawn a worker.
+Stop immediately. Go to Step 5.9. Spawn a worker.
 </critical>
 
-### 5.11: Handle User Feedback
+### 5.9: Handle User Feedback
 
 ```
 ═══════════════════════════════════════════════════════════════
@@ -675,7 +741,7 @@ You're designed for coordination. Stay in your lane.
 
 Even in autonomous mode, feedback creates subtasks with full worker + inspector verification. Autonomous mode skips human approval pauses, not bot verification.
 
-### 5.12: Context Health Check
+### 5.10: Context Health Check
 
 After 5+ feedback cycles, or when you notice:
 - Your responses slowing down or getting confused
@@ -785,16 +851,19 @@ If interrupted, re-run `/colony-deploy`. Tasks "running" >30 min reset to pendin
 | "skip T005" | Mark skipped, continue |
 | "retry T005" | Reset to pending |
 | "commit now" | Force commit |
-| {feedback} | Triggers 5.11 |
+| {feedback} | Triggers 5.9 |
 
 ## Rules Summary
 
-1. NEVER verify without inspector PASS
-2. NEVER mark complete without artifacts
-3. CLI for state: `${CLAUDE_PLUGIN_ROOT}/bin/colony state ...`
-4. Re-read state before each iteration
-5. Ask when parallelization uncertain
-6. **NEVER implement inline** - spawn workers
-7. **Feedback = subtask** - Every feedback item becomes a formal subtask, always verified
-8. **Milestone checkpoints** - Pause and ask for approval at milestone boundaries (unless autonomous)
-9. **Log decisions** - All parallelization, feedback, and checkpoint decisions logged to execution_log
+**STATELESS LOOP (Most Important):**
+1. **Re-read state EVERY iteration** - Don't trust memory, CLI is truth
+2. **Rule echo every 3 tasks** - Refresh core rules periodically
+3. **CLI decides parallelization** - Use `next-batch`, don't second-guess
+
+**Core Rules:**
+4. NEVER verify without inspector PASS
+5. NEVER mark complete without artifacts
+6. **NEVER implement inline** - spawn workers for ALL implementation
+7. **Feedback = subtask** - Every feedback item becomes a formal subtask
+8. **Milestone checkpoints** - Pause at boundaries (unless autonomous)
+9. **Log decisions** - All decisions logged to execution_log

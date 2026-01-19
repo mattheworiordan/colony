@@ -34,7 +34,7 @@ DEFAULT_WORKING_DIR=".working"
 
 # Code defaults - change these when updating Colony
 # Users with "default" in config will get these values
-CODE_DEFAULT_ORCHESTRATOR="sonnet"
+CODE_DEFAULT_ORCHESTRATOR="inherit"  # Must be "inherit" - sub-agents can't spawn sub-agents
 CODE_DEFAULT_WORKER="inherit"
 CODE_DEFAULT_INSPECTOR="haiku"
 
@@ -913,6 +913,9 @@ next_batch() {
   fi
 
   jq -r --arg milestone "$current_milestone" --argjson max "$max" '
+    # Save root for nested access
+    . as $root |
+
     # Get tasks in current milestone
     (.milestones[] | select(.id == $milestone) | .tasks // []) as $milestone_tasks |
 
