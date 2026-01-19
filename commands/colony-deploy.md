@@ -234,6 +234,12 @@ d) If parallel batch: spawn all workers together, wait for all.
 
 ### 5.6: Process Results
 
+**Parallel inspection:** If multiple workers completed in a parallel batch, spawn their inspectors in parallel too. This is safe because:
+- Inspectors are read-only (verify, don't modify code)
+- Each inspector has its own log file
+- Tests should be isolated
+- Respects same parallelization rules as workers (same-file tasks stay serial)
+
 **If DONE:**
 
 ═══════════════════════════════════════════════════════════════════════════════
@@ -250,7 +256,17 @@ inspector_model=$(${CLAUDE_PLUGIN_ROOT}/bin/colony get-model inspector)
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "inspection_started" '{"task": "{task-id}", "model": "'"$inspector_model"'"}'
 ```
 
-**Step B: Spawn inspector (REQUIRED)**
+**Step B: Get diff for inspector**
+
+Before spawning inspector, get the diff for changed files:
+
+```bash
+# Get diff for files changed by this task
+git diff HEAD -- {files_changed} > /tmp/task_diff.txt
+task_diff=$(cat /tmp/task_diff.txt)
+```
+
+**Step C: Spawn inspector (REQUIRED)**
 
 Spawn inspector with `subagent_type="colony:inspector"` and model from config:
 
@@ -269,8 +285,16 @@ Worker summary: {one-line from worker}
 Files changed: {list}
 
 ═══════════════════════════════════════════════════════════
-VERIFICATION PROCESS (in order)
+DIFF OF CHANGES (use this first - avoid re-reading files)
 ═══════════════════════════════════════════════════════════
+
+{task_diff}
+
+═══════════════════════════════════════════════════════════
+VERIFICATION PROCESS
+═══════════════════════════════════════════════════════════
+
+**Start with the diff above. Only read full files if you need more context.**
 
 1. **RUN the verification command from task file**
    - This is the PRIMARY verification
@@ -282,16 +306,17 @@ VERIFICATION PROCESS (in order)
    - e.g., `npx xo {files}` or project lint command
    - Lint errors = FAIL
 
-3. **Check each acceptance criterion literally**
+3. **Check each acceptance criterion using the diff**
+   - Review the diff to confirm the implementation matches requirements
    - "Tab navigation works" → Actually test tab navigation (click, verify)
    - "0 pixel diff" → Actually check the diff output
    - "Returns 200" → Actually curl the endpoint
-   - Do NOT assume criteria are met because files exist
 
-4. **Verify file contents match requirements**
-   - Read the files, check they implement what was asked
-   - Look for TODO, FIXME, or stub implementations
-   - Partial implementation = FAIL
+4. **If uncertain, expand context**
+   - If the diff doesn't provide enough context to verify correctness
+   - If you suspect the code may be in the wrong place in the file
+   - If you see something suspicious that needs more investigation
+   - THEN use the Read tool to get the full file
 
 ═══════════════════════════════════════════════════════════
 CRITICAL: VERIFICATION MEANS ACTUALLY TESTING
@@ -307,6 +332,7 @@ Do NOT:
 - Just check if the test script file exists
 - Assume "TypeScript compiles" means visual tests pass
 - Substitute simpler verification
+- Re-read files unnecessarily when the diff is sufficient
 
 The task file's verification command is the source of truth.
 RUN IT and check the result.
@@ -457,56 +483,6 @@ ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'milestones[0].status' '"co
 | `branch` | Create branch, continue | Create branch, ask to continue |
 | `pr` | Log for later, continue | Create PR, pause |
 
-### 5.8b: Fresh Context at Milestone Boundaries
-
-<critical>
-After completing a milestone, spawn a FRESH orchestrator for the next milestone.
-This prevents context degradation over long runs and ensures consistent adherence to instructions.
-</critical>
-
-**Why this matters:**
-- Long-running orchestrators accumulate context and can drift from instructions
-- Fresh context means fresh adherence to the orchestration rules
-- All state is persisted in state.json - nothing is lost by spawning fresh
-- This mirrors how workers already operate (fresh context per task)
-
-**After marking milestone complete:**
-
-1. Log the handoff:
-```bash
-${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "milestone_handoff" '{"from": "M1", "to": "M2", "reason": "fresh_context"}'
-```
-
-2. Spawn fresh orchestrator:
-```
-Task(
-  subagent_type: "general-purpose",
-  model: "{orchestrator_model}",
-  prompt: "Continue Colony orchestration for project: {project}
-
-  CRITICAL: Read and follow the FULL instructions in:
-  {CLAUDE_PLUGIN_ROOT}/commands/colony-deploy.md
-
-  Start from Step 1 (state initialization).
-
-  Previous milestone M{N} is complete. Continue with M{N+1}.
-
-  Configuration:
-  - Worker model: {worker_model}
-  - Inspector model: {inspector_model}
-  - CLI path: {CLAUDE_PLUGIN_ROOT}/bin/colony
-  - Autonomous mode: {true/false}
-
-  The previous orchestrator completed M{N}. Pick up from there."
-)
-```
-
-3. Exit current orchestrator (return control to spawned agent).
-
-**Exception:** If this is the FINAL milestone, don't spawn - proceed to Step 6 (Final Summary).
-
----
-
 **Non-autonomous mode (default):**
 
 First, gather context for the user to review:
@@ -561,7 +537,31 @@ Next milestone: M2 - Core Implementation
 ═══════════════════════════════════════════════════════════════
 ```
 
-Use AskUserQuestion with options: "Approve & Continue", "Review files first", "Pause".
+Use AskUserQuestion with options:
+- "Continue" - Proceed to next milestone (same context, faster)
+- "Continue with fresh context" - Spawn fresh orchestrator for next milestone (slower but prevents drift)
+- "Review files first" - Let user inspect before deciding
+- "Pause" - Stop here
+
+**If user selects "Continue with fresh context":**
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "milestone_handoff" '{"from": "M{N}", "to": "M{N+1}", "reason": "user_requested_fresh_context"}'
+```
+
+Then spawn fresh orchestrator:
+```
+Task(
+  subagent_type: "general-purpose",
+  model: "{orchestrator_model}",
+  prompt: "Continue Colony orchestration for project: {project}
+
+  Read and follow: {CLAUDE_PLUGIN_ROOT}/commands/colony-deploy.md
+  Start from Step 1. Previous milestone M{N} complete, continue with M{N+1}.
+
+  Config: worker={worker_model}, inspector={inspector_model}, autonomous={true/false}"
+)
+```
+Then exit (return control to spawned agent).
 
 **Autonomous mode:** Log completion, proceed to next milestone automatically.
 

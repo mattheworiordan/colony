@@ -1,5 +1,74 @@
 # Changelog
 
+## v1.5.0 (2026-01-19)
+
+### Summary
+
+**Performance optimization and clearer command naming.** This release reduces inspector token usage by ~40% through diff-based verification, and renames `colony-runner` to `colony-patrol` for clearer semantics.
+
+### Performance: Diff-Based Inspector Verification
+
+Inspectors now receive git diffs instead of re-reading full files:
+
+```markdown
+DIFF OF CHANGES (use this first - avoid re-reading files)
+═══════════════════════════════════════════════════════════
+
+{git diff output}
+
+**Start with the diff above. Only read full files if you need more context.**
+```
+
+**Impact:**
+- ~40% reduction in inspector tokens
+- Faster verification (no redundant file reads)
+- Inspector can still expand context if uncertain
+
+### Performance: Parallel Inspector Spawns
+
+After a parallel batch of workers completes, their inspectors now spawn in parallel too:
+
+```
+Before: Worker A done → Inspect A → Worker B done → Inspect B
+After:  Worker A+B done → Inspect A+B (parallel)
+```
+
+This is safe because inspectors are read-only and have separate log files.
+
+### Changed: `/colony-runner` → `/colony-patrol`
+
+Renamed for clearer semantics:
+
+| Command | Mode | Description |
+|---------|------|-------------|
+| `/colony-mobilize` | Plan | Prepare the operation |
+| `/colony-deploy` | Fast | In-session, context accumulates |
+| `/colony-patrol` | Strict | Fresh context per milestone |
+
+The naming now reflects the intent: **deploy for speed, patrol for strictness**.
+
+### Changed: Milestone Context Choice
+
+`/colony-deploy` no longer auto-spawns fresh orchestrator at milestones. Instead, non-autonomous mode offers a choice:
+
+```
+Options:
+1. Continue (same context, faster)
+2. Continue with fresh context (slower but prevents drift)
+3. Review files first
+4. Pause
+```
+
+This gives users control over the speed/strictness trade-off.
+
+### Removed: Step 5.8b (Fresh Context at Milestone Boundaries)
+
+The automatic fresh orchestrator spawn per milestone was removed from `/colony-deploy`. Users who want fresh context per milestone should:
+- Use `/colony-patrol` for automatic fresh context
+- Or select "Continue with fresh context" at milestone checkpoints
+
+---
+
 ## v1.4.0 (2026-01-19)
 
 ### Summary
@@ -46,11 +115,11 @@ kill $PID1 $PID2
 
 ### New: RELF-Style Fresh Context Execution
 
-Alternative execution mode using `colony-runner` bash script:
+Alternative execution mode using `colony-patrol` bash script:
 
 ```bash
 # Fresh context per milestone, bash outer loop can't drift
-colony-runner my-project --autonomous --verbose
+colony-patrol my-project --autonomous --verbose
 ```
 
 **How it works:**
@@ -64,7 +133,7 @@ colony-runner my-project --autonomous --verbose
 | Mode | Command | Context | Best For |
 |------|---------|---------|----------|
 | In-session | `/colony-deploy` | Accumulates | Interactive, quick tasks |
-| Fresh context | `colony-runner` | Per milestone | Long runs, strict adherence |
+| Fresh context | `colony-patrol` | Per milestone | Long runs, strict adherence |
 
 ### New: Milestone CLI Commands
 
@@ -107,7 +176,7 @@ Clearer failure thresholds:
 
 ### Technical: Nested Task Limitation
 
-Discovered that sub-agents cannot spawn sub-agents (Task tool not available to Task-spawned agents). This is why `colony-runner` uses `claude -p` instead - each `claude -p` invocation is a fresh top-level session with full tool access.
+Discovered that sub-agents cannot spawn sub-agents (Task tool not available to Task-spawned agents). This is why `colony-patrol` uses `claude -p` instead - each `claude -p` invocation is a fresh top-level session with full tool access.
 
 ---
 

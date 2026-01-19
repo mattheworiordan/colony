@@ -1,16 +1,16 @@
 ---
-name: colony-runner
-description: RELF-style execution with fresh context per milestone
-version: 1.4.0
+name: colony-patrol
+description: Strict execution with fresh context per milestone
+version: 1.5.0
 status: active
 
 # Claude Code command registration
 allowed-tools: Bash, Read, AskUserQuestion
 ---
 
-# Colony Runner
+# Colony Patrol
 
-Execute a Colony project with fresh context per milestone using the RELF-style bash runner.
+Execute a Colony project with fresh context per milestone for strict adherence to rules.
 
 **When to use this instead of `/colony-deploy`:**
 - Long-running projects (many milestones)
@@ -54,22 +54,22 @@ Based on user's choices, run the appropriate command:
 
 **Interactive + Verbose (recommended):**
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/colony-runner {project} --verbose 2>&1
+${CLAUDE_PLUGIN_ROOT}/bin/colony-patrol {project} --verbose 2>&1
 ```
 
 **Autonomous + Verbose:**
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/colony-runner {project} --autonomous --verbose 2>&1
+${CLAUDE_PLUGIN_ROOT}/bin/colony-patrol {project} --autonomous --verbose 2>&1
 ```
 
 **Interactive (minimal output):**
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/colony-runner {project} 2>&1
+${CLAUDE_PLUGIN_ROOT}/bin/colony-patrol {project} 2>&1
 ```
 
 **Autonomous (minimal output):**
 ```bash
-${CLAUDE_PLUGIN_ROOT}/bin/colony-runner {project} --autonomous 2>&1
+${CLAUDE_PLUGIN_ROOT}/bin/colony-patrol {project} --autonomous 2>&1
 ```
 
 ## Step 4: Monitor and Report
@@ -86,13 +86,15 @@ When the runner completes, summarize:
 
 ## Comparison with /colony-deploy
 
-| Aspect | /colony-deploy | /colony-runner |
+| Aspect | /colony-deploy | /colony-patrol |
 |--------|----------------|----------------|
-| Context | Accumulates in session | Fresh per milestone |
+| Context | Accumulates (faster) | Fresh per milestone (stricter) |
 | Orchestrator | AI in your session | AI via claude -p |
 | Interactivity | Full (AskUserQuestion) | Between milestones only |
 | Drift risk | Can forget rules over time | Bash loop is deterministic |
 | Best for | Quick tasks, interactive work | Long runs, strict adherence |
+
+**Choose deploy for speed, patrol for strictness.**
 
 ## Troubleshooting
 

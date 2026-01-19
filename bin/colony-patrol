@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 #
-# Colony Runner - RELF-style execution with fresh context per milestone
+# Colony Patrol - Strict execution with fresh context per milestone
 #
 # This script provides an alternative to /colony-deploy that uses
 # a bash outer loop with `claude -p` for each milestone, ensuring
 # fresh context and preventing context drift.
 #
 # Usage:
-#   colony-runner <project> [options]
+#   colony-patrol <project> [options]
 #
 # Options:
 #   --autonomous    Run without pausing between milestones
@@ -15,8 +15,8 @@
 #   --model <model> Override the model for orchestration (default: from config)
 #
 # Example:
-#   colony-runner my-project --autonomous
-#   colony-runner my-project --verbose
+#   colony-patrol my-project --autonomous
+#   colony-patrol my-project --verbose
 #
 
 set -euo pipefail
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
     --verbose) VERBOSE=true; shift ;;
     --model) MODEL="$2"; shift 2 ;;
     --help|-h)
-      echo "Usage: colony-runner <project> [--autonomous] [--verbose] [--model <model>]"
+      echo "Usage: colony-patrol <project> [--autonomous] [--verbose] [--model <model>]"
       exit 0
       ;;
     -*) echo "Unknown option: $1" >&2; exit 1 ;;
@@ -61,7 +61,7 @@ done
 
 if [[ -z "$PROJECT" ]]; then
   echo -e "${RED}Error: Project name required${NC}" >&2
-  echo "Usage: colony-runner <project> [--autonomous] [--verbose] [--model <model>]"
+  echo "Usage: colony-patrol <project> [--autonomous] [--verbose] [--model <model>]"
   exit 1
 fi
 
@@ -80,7 +80,7 @@ if ! "$CLI" state get "$PROJECT" >/dev/null 2>&1; then
 fi
 
 echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════════${NC}"
-echo -e "${BOLD}${CYAN}  Colony Runner - Fresh Context Execution${NC}"
+echo -e "${BOLD}${CYAN}  Colony Patrol - Fresh Context Execution${NC}"
 echo -e "${BOLD}${CYAN}═══════════════════════════════════════════════════════════════${NC}"
 echo ""
 echo -e "Project: ${BLUE}$PROJECT${NC}"
@@ -186,7 +186,7 @@ Now read the state files and execute milestone $MILESTONE."
       echo
       case "$REPLY" in
         y|Y) echo "Continuing..." ;;
-        n|N) echo "Paused. Run 'colony-runner $PROJECT' to continue."; exit 0 ;;
+        n|N) echo "Paused. Run 'colony-patrol $PROJECT' to continue."; exit 0 ;;
         q|Q) echo "Quit."; exit 0 ;;
         *) echo "Invalid input. Pausing."; exit 0 ;;
       esac
@@ -248,4 +248,4 @@ done
 echo ""
 "$CLI" state summary "$PROJECT"
 echo ""
-echo -e "${GREEN}Colony Runner complete!${NC}"
+echo -e "${GREEN}Colony Patrol complete!${NC}"
