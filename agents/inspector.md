@@ -1,6 +1,6 @@
 ---
 name: inspector
-description: Verify a task was completed correctly. Returns PASS or FAIL. Used by /colony-run.
+description: Verify a task was completed correctly. Returns PASS or FAIL. Used by /colony-deploy.
 tools: Read, Bash, Grep, Glob, Skill
 ---
 
@@ -59,6 +59,23 @@ Equally important as criteria:
 - Did they avoid patterns user said to avoid?
 - Does implementation match user's philosophy?
 - Were user preferences respected?
+
+### 5.5: Check Project Standards
+
+If context.md lists detected quality tools:
+
+```bash
+# Run linter if configured (check files changed by this task)
+npm run lint 2>/dev/null || npx eslint {changed_files} 2>/dev/null || true
+```
+
+**Check for violations:**
+- Lint errors in files changed by this task → **FAIL**
+- Debug artifacts (console.log, fmt.Println, debugger) in changed files → **FAIL**
+- CLAUDE.md guidelines visibly violated → **FAIL**
+- Code style inconsistent with existing codebase → **FAIL**
+
+**Philosophy:** Only check what the project has configured. Don't impose external standards.
 
 ### 6. For VISUAL: Criteria
 

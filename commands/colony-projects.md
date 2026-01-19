@@ -22,7 +22,7 @@ If no projects:
 ```
 No colony projects found.
 
-Use /colony-plan to create a project from a brief.
+Use /colony-mobilize to create a project from a brief.
 ```
 
 ## Step 2: Load Each Project's State
@@ -81,8 +81,8 @@ For each project directory, read `state.json` and calculate:
 | Command | Action |
 |---------|--------|
 | `/colony-status {project}` | Detailed status for a project |
-| `/colony-run {project}` | Start/resume execution |
-| `/colony-plan` | Create a new project |
+| `/colony-deploy {project}` | Start/resume execution |
+| `/colony-mobilize` | Create a new project |
 | "delete {project}" | Remove a project |
 | "archive {project}" | Move to .working/colony/archive/ |
 ```
@@ -94,7 +94,7 @@ After listing, user can:
 | Command | Action |
 |---------|--------|
 | "show {project}" | Same as /colony-status {project} |
-| "run {project}" | Same as /colony-run {project} |
+| "run {project}" | Same as /colony-deploy {project} |
 | "delete {project}" | Remove project directory |
 | "archive {project}" | Move to archive folder |
 | "clean completed" | Archive all 100% complete projects |

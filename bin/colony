@@ -5,9 +5,10 @@
 #
 # Commands:
 #   config init              Initialize ~/.colony/config.json with defaults
-#   config get [key]         Get config value (or all if no key)
+#   config get [key]         Get config value (or all if no key, shows resolved defaults)
 #   config set <key> <value> Set config value
 #   config path              Print config file path
+#   config defaults          Show current code defaults for models
 #
 #   state init <project>                    Initialize state.json for project
 #   state init <project> --from <file>      Initialize from plan.json (bulk import)
@@ -30,6 +31,12 @@ set -euo pipefail
 CONFIG_DIR="${HOME}/.colony"
 CONFIG_FILE="${CONFIG_DIR}/config.json"
 DEFAULT_WORKING_DIR=".working"
+
+# Code defaults - change these when updating Colony
+# Users with "default" in config will get these values
+CODE_DEFAULT_ORCHESTRATOR="sonnet"
+CODE_DEFAULT_WORKER="inherit"
+CODE_DEFAULT_INSPECTOR="haiku"
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -87,9 +94,9 @@ config_init() {
 {
   "working_dir": ".working",
   "models": {
-    "orchestrator": "haiku",
-    "worker": "inherit",
-    "inspector": "haiku"
+    "orchestrator": "default",
+    "worker": "default",
+    "inspector": "default"
   }
 }
 EOF
@@ -106,10 +113,49 @@ config_get() {
   fi
 
   if [[ $# -eq 0 ]]; then
-    cat "$CONFIG_FILE"
+    # Show config with resolved defaults as comments
+    echo "{"
+    echo "  \"working_dir\": \"$(jq -r '.working_dir' "$CONFIG_FILE")\","
+    echo "  \"models\": {"
+
+    local orch=$(jq -r '.models.orchestrator // "default"' "$CONFIG_FILE")
+    local work=$(jq -r '.models.worker // "default"' "$CONFIG_FILE")
+    local insp=$(jq -r '.models.inspector // "default"' "$CONFIG_FILE")
+
+    if [[ "$orch" == "default" ]]; then
+      echo "    \"orchestrator\": \"default\",  # → $CODE_DEFAULT_ORCHESTRATOR"
+    else
+      echo "    \"orchestrator\": \"$orch\","
+    fi
+
+    if [[ "$work" == "default" ]]; then
+      echo "    \"worker\": \"default\",        # → $CODE_DEFAULT_WORKER"
+    else
+      echo "    \"worker\": \"$work\","
+    fi
+
+    if [[ "$insp" == "default" ]]; then
+      echo "    \"inspector\": \"default\"      # → $CODE_DEFAULT_INSPECTOR"
+    else
+      echo "    \"inspector\": \"$insp\""
+    fi
+
+    echo "  }"
+    echo "}"
   else
     jq -r ".$1 // empty" "$CONFIG_FILE"
   fi
+}
+
+# Show current code defaults
+config_defaults() {
+  echo -e "${BLUE}Current Colony defaults:${NC}"
+  echo "  orchestrator: $CODE_DEFAULT_ORCHESTRATOR"
+  echo "  worker: $CODE_DEFAULT_WORKER"
+  echo "  inspector: $CODE_DEFAULT_INSPECTOR"
+  echo ""
+  echo "Set \"default\" in config to use these (recommended)."
+  echo "These may change in future Colony versions."
 }
 
 # Set config value
@@ -411,6 +457,19 @@ state_task_complete() {
     exit 1
   fi
 
+  # ENFORCEMENT: Check that inspection was performed for this task
+  local inspection_exists
+  inspection_exists=$(jq --arg id "$task_id" '
+    .execution_log | map(select(.event == "inspection_started" and .task == $id)) | length > 0
+  ' "$state_file")
+
+  if [[ "$inspection_exists" != "true" ]]; then
+    echo -e "${RED}ERROR: Cannot mark $task_id complete - no inspection_started event found${NC}" >&2
+    echo -e "${YELLOW}Orchestrator must spawn inspector before marking tasks complete.${NC}" >&2
+    echo -e "${YELLOW}Log an inspection event first: colony state log $project inspection_started '{\"task\": \"$task_id\"}'${NC}" >&2
+    exit 1
+  fi
+
   local tmp
   tmp=$(mktemp)
   local timestamp
@@ -642,7 +701,18 @@ print_reminders() {
   fi
 }
 
-# Get model for a role (with override notification)
+# Resolve "default" to actual code default for a role
+resolve_default() {
+  local role="$1"
+  case "$role" in
+    orchestrator) echo "$CODE_DEFAULT_ORCHESTRATOR" ;;
+    worker) echo "$CODE_DEFAULT_WORKER" ;;
+    inspector) echo "$CODE_DEFAULT_INSPECTOR" ;;
+    *) echo "inherit" ;;
+  esac
+}
+
+# Get model for a role (resolves "default" to code default)
 get_model() {
   if [[ $# -lt 1 ]]; then
     echo "Usage: colony get-model <role>" >&2
@@ -650,21 +720,30 @@ get_model() {
   fi
 
   local role="$1"
+  local config_value="default"
 
-  if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo "inherit"
-    return 0
+  if [[ -f "$CONFIG_FILE" ]]; then
+    config_value=$(jq -r ".models.$role // \"default\"" "$CONFIG_FILE")
   fi
 
-  local model
-  model=$(jq -r ".models.$role // \"inherit\"" "$CONFIG_FILE")
+  local resolved_model
+  local is_default=false
 
-  # Always notify when using explicit model (not user's session default)
-  if [[ "$model" != "inherit" ]]; then
-    echo -e "${YELLOW}Note: $role using $model (configured in ~/.colony/config.json)${NC}" >&2
+  if [[ "$config_value" == "default" || -z "$config_value" ]]; then
+    resolved_model=$(resolve_default "$role")
+    is_default=true
+  else
+    resolved_model="$config_value"
   fi
 
-  echo "$model"
+  # Notify about model being used (to stderr so it doesn't break scripts)
+  if [[ "$is_default" == "true" ]]; then
+    echo -e "${BLUE}$role: $resolved_model (default)${NC}" >&2
+  elif [[ "$resolved_model" != "inherit" ]]; then
+    echo -e "${YELLOW}$role: $resolved_model (user override)${NC}" >&2
+  fi
+
+  echo "$resolved_model"
 }
 
 # Print working directory
@@ -681,9 +760,10 @@ Usage: colony <command> [args]
 
 Config Commands:
   config init              Initialize ~/.colony/config.json with defaults
-  config get [key]         Get config value (or all if no key)
+  config get [key]         Get config value (or all if no key, shows resolved defaults)
   config set <key> <value> Set config value
   config path              Print config file path
+  config defaults          Show current code defaults for models
 
 State Commands:
   state init <project>                    Initialize state for project
@@ -726,7 +806,8 @@ case "${1:-help}" in
       get) shift 2; config_get "$@" ;;
       set) shift 2; config_set "$@" ;;
       path) echo "$CONFIG_FILE" ;;
-      *) echo "Usage: colony config <init|get|set|path>" >&2; exit 1 ;;
+      defaults) config_defaults ;;
+      *) echo "Usage: colony config <init|get|set|path|defaults>" >&2; exit 1 ;;
     esac
     ;;
   state)

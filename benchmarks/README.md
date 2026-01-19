@@ -98,8 +98,8 @@ cp /path/to/colony/benchmarks/kitty-protocol-brief.md .working/brief.md
 claude
 
 # Plan and execute (2 commands)
-/colony-plan
-/colony-run autonomous
+/colony-mobilize
+/colony-deploy autonomous
 ```
 
 **Measure:**

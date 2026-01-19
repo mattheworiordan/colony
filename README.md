@@ -12,15 +12,15 @@ Colony turns Claude Code into a parallel task execution engine with independent 
 
 ## See It In Action
 
-<img src="assets/colony-runner-animated.gif" alt="Colony executing tasks" width="700">
+<img src="assets/colony-deploy-animated.gif" alt="Colony deploying tasks" width="700">
 
-**Smart Planning** — Colony analyzes your brief, identifies parallelization opportunities, and creates an execution plan:
+**Smart Mobilization** — Colony analyzes your brief, identifies parallelization opportunities, and prepares tasks for execution:
 
-<img src="assets/colony-planning.png" alt="Colony planning phase" width="700">
+<img src="assets/colony-mobilizing.png" alt="Colony mobilization phase" width="700">
 
-**Dependency-Aware Execution** — Tasks run in parallel where safe, serialize where necessary:
+**Dependency-Aware Deployment** — Tasks deploy in parallel where safe, serialize where necessary:
 
-<img src="assets/colony-planned.png" alt="Colony execution plan" width="700">
+<img src="assets/colony-mobilized.png" alt="Colony execution plan" width="700">
 
 **Simple Commands** — Everything accessible via `/colony-*` commands:
 
@@ -60,6 +60,51 @@ Measured on the same task ([Kitty Keyboard Protocol](https://github.com/vadimdem
 
 ---
 
+## Colony + Claude Plan Mode
+
+Colony is designed to **complement** Claude's native plan mode, not compete with it.
+
+### The Workflow
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  1. PLAN (Claude Native)                                        │
+│     claude --permission-mode plan                               │
+│     → Strategic thinking, requirements, approach                │
+│     → Output: ~/.claude/plans/your-plan.md                      │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  2. MOBILIZE (Colony)                                           │
+│     /colony-mobilize                                            │
+│     → Task decomposition, parallelization, dependencies         │
+│     → Output: .working/colony/{project}/tasks/                  │
+└─────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────┐
+│  3. DEPLOY (Colony)                                             │
+│     /colony-deploy                                              │
+│     → Parallel execution with independent verification          │
+│     → Output: Working code, logs, report                        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Why Not Just Use Claude's Execution?
+
+When you exit plan mode, Claude implements sequentially. Colony does it better:
+
+| Aspect | Native Execution | Colony Execution |
+|--------|------------------|------------------|
+| **Parallelization** | Sequential | Intelligent parallel |
+| **Verification** | Self-check | Independent inspector |
+| **Context** | Accumulates (drifts) | Fresh per task |
+| **Recovery** | Start over | Resume from exact task |
+| **Quality** | Variable | 0 lint errors (benchmarked) |
+
+**Use Claude plan mode for thinking. Use Colony for doing.**
+
+---
+
 ## Key Features
 
 ### Intelligent Parallelization
@@ -83,8 +128,8 @@ Colony doesn't just run things in parallel—it *thinks* about what can safely p
 - Complete report waiting for you in the morning
 
 ```bash
-/colony-run              # Interactive mode
-/colony-run autonomous   # Autonomous mode
+/colony-deploy              # Interactive mode
+/colony-deploy autonomous   # Autonomous mode
 ```
 
 ### Git-Aware Workflow
@@ -184,6 +229,26 @@ Alternatively, add `.working/` to your project's `.gitignore` if you prefer per-
 
 ## Quick Start
 
+### Recommended: Start with Claude Plan Mode
+
+For complex features, let Claude help you think through requirements first:
+
+```bash
+# 1. Use Claude's plan mode to define requirements
+claude --permission-mode plan
+> I need to add OAuth2 authentication. Interview me about requirements.
+
+# 2. Claude creates a plan in ~/.claude/plans/
+# 3. Mobilize Colony with that plan
+/colony-mobilize
+
+# 4. Colony auto-detects the recent plan, or specify:
+/colony-mobilize ~/.claude/plans/gleaming-sniffing-bird.md
+
+# 5. Deploy
+/colony-deploy
+```
+
 ### Option 1: Create a Brief File
 
 ```bash
@@ -202,10 +267,10 @@ Add login/logout functionality with session management.
 EOF
 
 # 2. Plan the tasks
-/colony-plan .working/MY_FEATURE_BRIEF.md
+/colony-mobilize .working/MY_FEATURE_BRIEF.md
 
 # 3. Review the decomposition, then run
-/colony-run
+/colony-deploy
 ```
 
 ### Option 2: Point to Any File
@@ -214,18 +279,18 @@ You can use any markdown file as a brief — it doesn't need to be in `.working/
 
 ```bash
 # Use a file from docs/
-/colony-plan docs/FEATURE_SPEC.md
+/colony-mobilize docs/FEATURE_SPEC.md
 
 # Use a file from anywhere
-/colony-plan ~/Desktop/my-project-plan.md
+/colony-mobilize ~/Desktop/my-project-plan.md
 ```
 
 ### Option 3: Describe Inline
 
-If you don't have a brief file, just run `/colony-plan` and describe what you want:
+If you don't have a brief file, just run `/colony-mobilize` and describe what you want:
 
 ```bash
-/colony-plan
+/colony-mobilize
 # Colony will ask: "I didn't find any brief files. You can:
 #   1. Tell me the path to your brief
 #   2. Paste the tasks directly here
@@ -242,36 +307,38 @@ For simple, well-defined tasks, skip the planning phase entirely:
 
 ## Brief Discovery
 
-When you run `/colony-plan` without specifying a file, Colony searches for potential briefs in:
+When you run `/colony-mobilize` without specifying a file, Colony searches for potential briefs in:
 
-1. **`.working/*.md`** - The conventional location for working documents
-2. **`docs/*.md`** - Documentation folder
-3. **Files matching patterns**: `*brief*`, `*plan*`, `*todo*`, `*spec*`
+1. **`~/.claude/plans/*.md`** - Recent Claude plans (last 48 hours), ranked by relevance to current project
+2. **`.working/*.md`** - The conventional location for working documents
+3. **`docs/*.md`** - Documentation folder
+4. **Root `.md` files** - Excluding README, CHANGELOG, LICENSE
 
-If multiple candidates are found, Colony will ask which one to use. If none are found, you can paste or describe your requirements directly.
+If multiple candidates are found, Colony shows them ranked by relevance and asks which to use. If none are found, you can provide a path or describe your requirements directly.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
-| `/colony-plan [brief]` | Decompose a brief into executable tasks |
-| `/colony-run [project]` | Execute tasks with verification |
-| `/colony-run autonomous` | Execute without human checkpoints |
+| `/colony-mobilize [brief]` | Prepare tasks from a brief or Claude plan |
+| `/colony-deploy [project]` | Deploy workers with verification |
+| `/colony-deploy autonomous` | Deploy without human checkpoints |
 | `/colony-status [project]` | Show detailed project status |
 | `/colony-projects` | List all colony projects |
 | `/colony-quick "prompt"` | Quick execution for simple tasks |
 
 ## How It Works
 
-### 1. Planning Phase (`/colony-plan`)
+### 1. Mobilization Phase (`/colony-mobilize`)
 
-- Finds or creates a brief file
+- Finds a brief file or Claude plan (auto-detects recent plans)
 - Analyzes the codebase for parallelization opportunities
-- Decomposes work into 15-45 minute tasks
-- Captures context, design intent, and acceptance criteria
+- Decomposes work into executable tasks
+- Identifies shared patterns to prevent duplication (DRY)
+- Detects project standards (linter, CLAUDE.md, etc.)
 - Sets up Git strategy (branch, commit frequency)
 
-### 2. Execution Phase (`/colony-run`)
+### 2. Deployment Phase (`/colony-deploy`)
 
 - Spawns isolated **worker** agents for each task
 - Runs tasks in parallel where safe
@@ -296,7 +363,7 @@ If multiple candidates are found, Colony will ask which one to use. If none are 
 
 ## Project Structure
 
-When you run `/colony-plan`, it creates:
+When you run `/colony-mobilize`, it creates:
 
 ```
 .working/colony/{project-name}/
@@ -388,20 +455,25 @@ Colony can be configured via `~/.colony/config.json`. This file is created autom
 {
   "working_dir": ".working",
   "models": {
-    "orchestrator": "haiku",
-    "worker": "inherit",
-    "inspector": "haiku"
+    "orchestrator": "default",
+    "worker": "default",
+    "inspector": "default"
   }
 }
 ```
+
+Use `"default"` to follow Colony's recommended settings (may change in future versions).
+Use a specific model name to lock in your preference.
 
 ### Model Roles
 
 | Role | What it does | Default | Recommendation |
 |------|--------------|---------|----------------|
-| `orchestrator` | Coordinates tasks, manages state, handles checkpoints | `haiku` | `haiku` - coordination is mechanical |
+| `orchestrator` | Coordinates tasks, manages state, spawns workers/inspectors | `sonnet` | `sonnet` - must reliably follow complex prompts |
 | `worker` | Implements code, runs tests, creates files | `inherit` | `inherit` - needs full reasoning power |
 | `inspector` | Verifies task completion, checks criteria | `haiku` | `haiku` - verification is simpler |
+
+> **Note:** Haiku was tried for orchestrator in v1.2 but proved too weak to reliably spawn inspectors. Sonnet provides the right balance of speed and capability for orchestration.
 
 ### Model Options
 
@@ -448,7 +520,7 @@ Default is 5. Set to any value based on your machine resources and task complexi
 
 ### Git Strategy
 
-Configured during `/colony-plan`:
+Configured during `/colony-mobilize`:
 - **Branch**: Feature branch or current branch
 - **Commits**: After each task, phase, or at end
 - **Style**: Conventional commits with Co-Authored-By
@@ -456,7 +528,7 @@ Configured during `/colony-plan`:
 ### Autonomous Mode
 
 ```
-/colony-run autonomous
+/colony-deploy autonomous
 ```
 
 Safety limits:
@@ -509,11 +581,11 @@ setup
 
 ### "No projects found"
 
-Run `/colony-plan` first to create a project from a brief.
+Run `/colony-mobilize` first to create a project from a brief.
 
 ### Task stuck in "running"
 
-Tasks running >30 minutes reset to "pending" on next `/colony-run`.
+Tasks running >30 minutes reset to "pending" on next `/colony-deploy`.
 
 ### Verification keeps failing
 

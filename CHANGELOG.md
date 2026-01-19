@@ -1,5 +1,88 @@
 # Changelog
 
+## v1.3.0 (2026-01-19)
+
+### Summary
+
+**Colony now positions itself as the execution engine for Claude's plan mode.** New command names, Claude plan auto-detection, and quality-aware task decomposition.
+
+### Command Renames
+
+| Old | New | Rationale |
+|-----|-----|-----------|
+| `/colony-plan` | `/colony-mobilize` | Avoids confusion with Claude's plan mode |
+| `/colony-run` | `/colony-deploy` | Pairs with mobilize; "deploy the workers" |
+
+### New: Colony + Claude Plan Mode Integration
+
+Colony now auto-detects recent Claude plans from `~/.claude/plans/`:
+
+```bash
+# Claude creates a plan
+claude --permission-mode plan
+> Interview me about adding OAuth2 authentication
+
+# Colony finds and uses it
+/colony-mobilize
+# → Shows: "Found ~/.claude/plans/gleaming-sniffing-bird.md (2 hours ago) ⭐ Likely relevant"
+```
+
+Plans are ranked by relevance (file path matches, project name mentions, recency).
+
+### New: Weak Brief Detection
+
+When a brief appears underspecified (short, vague, no acceptance criteria), Colony warns:
+
+```
+⚠️ This appears to be a high-level goal rather than a detailed plan.
+
+Colony is an execution engine - it works best with well-defined requirements.
+Consider using Claude's plan mode first...
+```
+
+### New: DRY-Aware Task Decomposition
+
+Colony now detects shared patterns during mobilization:
+
+- Same UI component mentioned multiple times → creates shared component task first
+- Common utilities referenced across features → infrastructure task in M1
+- Prevents duplicate implementations across parallel workers
+
+### New: Project Standards Detection
+
+Mobilization now scans for quality tools and guidelines:
+
+```bash
+# Auto-detected
+CLAUDE.md, CONTRIBUTING.md, ESLint, Prettier, TypeScript...
+```
+
+Workers must follow detected standards. Inspectors verify compliance.
+
+### Fix: Orchestrator Model Changed to Sonnet
+
+**Problem:** Haiku orchestrator (from v1.2) was skipping inspector verification entirely, allowing tasks to be marked complete without quality checks. This resulted in lint errors passing undetected.
+
+**Root cause:** Haiku model is too weak to reliably follow the 600-line orchestrator prompt. It was:
+- Receiving worker DONE status
+- Skipping the "spawn inspector" instruction
+- Marking tasks complete directly
+
+**Solution:**
+1. Default orchestrator model changed from `haiku` to `sonnet`
+2. CLI now enforces inspection: `task-complete` fails if no `inspection_started` event exists
+3. Stronger prompt reinforcement for inspector spawn step
+
+**Impact:** Slightly slower orchestration, but guaranteed quality verification.
+
+### Documentation
+
+- New README section: "Colony + Claude Plan Mode"
+- Workflow diagram showing Plan → Mobilize → Deploy
+- Updated Quick Start with recommended plan mode workflow
+
+---
+
 ## v1.2.0 (2026-01-19)
 
 ### Summary
@@ -26,6 +109,8 @@ Colony's 12-minute run produces code that's ready to merge.
 ---
 
 ### Performance: Haiku Orchestrator with Session Model Passthrough
+
+> ⚠️ **Superseded in v1.3.0:** Haiku orchestrator proved too weak to reliably spawn inspectors. Default changed to Sonnet in v1.3.0.
 
 The orchestrator now runs on Haiku by default while workers use your session model (Opus/Sonnet).
 

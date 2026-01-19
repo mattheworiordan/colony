@@ -23,7 +23,7 @@ ls -d .working/colony/*/ 2>/dev/null
 
 - One project → show that project's status
 - Multiple projects → ask which one (or suggest `/colony-projects` for overview)
-- No projects → "No projects found. Use /colony-plan to create one."
+- No projects → "No projects found. Use /colony-mobilize to create one."
 
 ## Step 2: Load State
 
@@ -94,9 +94,9 @@ Read: .working/colony/{project}/state.json
 ### Next Steps
 
 {If running: "Execution in progress..."}
-{If paused: "Run /colony-run to continue"}
+{If paused: "Run /colony-deploy to continue"}
 {If complete: "All tasks complete!"}
-{If failures: "Fix T005 and run /colony-run to retry"}
+{If failures: "Fix T005 and run /colony-deploy to retry"}
 ════════════════════════════════════════════════════════════════
 ```
 

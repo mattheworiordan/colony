@@ -53,7 +53,7 @@ This task seems too complex for /colony-quick:
 • {reason 1}
 • {reason 2}
 
-Suggest using /colony-plan instead for:
+Suggest using /colony-mobilize instead for:
 • More control over task decomposition
 • Ability to add context and design intent
 • Interactive planning
@@ -178,7 +178,7 @@ Decomposed into {N} tasks:
 Running in autonomous mode (serial)...
 ```
 
-Then execute using the same loop as `/colony-run` but with:
+Then execute using the same loop as `/colony-deploy` but with:
 - Always autonomous mode
 - Always serial execution (concurrency: 1)
 - No Git operations
@@ -214,14 +214,14 @@ Error:
 {error summary}
 
 Options:
-• Fix the issue and run: /colony-run {project-name}
+• Fix the issue and run: /colony-deploy {project-name}
 • See details: /colony-status {project-name}
 • Abandon: rm -rf .working/colony/{project-name}
 ```
 
 ## Safety Rules
 
-1. **Max 5 tasks** - If decomposition yields >5 tasks, suggest /colony-plan
+1. **Max 5 tasks** - If decomposition yields >5 tasks, suggest /colony-mobilize
 2. **Serial execution only** - No parallelization inference
 3. **No Git operations** - Changes stay uncommitted
 4. **30 minute timeout** - Abort if taking too long
@@ -239,7 +239,7 @@ Options:
 /colony-quick "Extract the header component into its own file"
 ```
 
-### Bad Quick Tasks (Use /colony-plan Instead)
+### Bad Quick Tasks (Use /colony-mobilize Instead)
 
 ```bash
 # Too vague

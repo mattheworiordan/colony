@@ -1,6 +1,6 @@
 ---
 name: worker
-description: Execute a single task in isolation. Returns DONE, PARTIAL, or STUCK. Used by /colony-run.
+description: Execute a single task in isolation. Returns DONE, PARTIAL, or STUCK. Used by /colony-deploy.
 tools: Read, Write, Edit, Bash, Grep, Glob, WebFetch, Skill
 ---
 
@@ -124,6 +124,16 @@ These cause FAIL from inspector:
 | "Instead of X, I did Y" | Do X or return STUCK |
 | Ignoring design intent | Follow both criteria AND intent |
 | Claiming DONE without log | Always write the log |
+
+## Quality Standards
+
+Before claiming DONE, check project standards (from context.md):
+
+1. **If project has linter** - Run it, fix any errors in files you changed
+2. **If CLAUDE.md exists** - Re-read and verify your changes comply
+3. **If CONTRIBUTING.md exists** - Follow its guidelines
+4. **Match existing patterns** - Don't introduce new conventions
+5. **No debug artifacts** - Remove console.log, fmt.Println, etc.
 
 ## Rules
 
