@@ -1,7 +1,7 @@
 ---
 name: colony-mobilize
 description: Prepare a brief for parallel execution - task decomposition and worker mobilization
-version: 1.3.0
+version: 1.4.0
 status: active
 
 # Claude Code command registration
@@ -143,13 +143,54 @@ If dirty: STOP, ask user to commit/stash.
 - Commits: phase/task/end/manual
 - Style: conventional commits
 
-## Step 5: Visual/Browser Detection
+## Step 5: Extract Hard Requirements
 
-Scan brief for visual verification indicators:
-- "visual verification", "screenshot", "browser testing"
-- "UI testing", "form verification", "end-to-end"
+<critical>
+This step is MANDATORY. The brief is a CONTRACT, not a suggestion.
 
-If found: set `verification_type: visual`, prefix criteria with `VISUAL:`.
+Every verification requirement in the brief MUST map to:
+- A task that implements it, OR
+- An acceptance criterion that checks it, OR
+- A verification command that runs it
+
+If the brief says "run X", there must be a task/verification that ACTUALLY RUNS X.
+NO SUBSTITUTING complex verification with simpler checks.
+</critical>
+
+**Scan the brief and extract:**
+
+1. **Explicit verification requirements:**
+   - "must pass visual tests" → Task that runs visual tests
+   - "0 pixel difference" → Verification command with pixelmatch
+   - "must pass integration tests" → Task that runs integration tests
+   - "API must return X" → Verification command that curls and checks response
+
+2. **Gate conditions (blockers):**
+   - "DO NOT proceed until X" → X becomes a blocking verification
+   - "MANDATORY" anything → Must be in acceptance criteria
+   - "must/shall/required" statements → Hard requirements
+
+3. **Infrastructure requirements:**
+   - "start servers" → Task includes server lifecycle
+   - "run against production" → Task includes environment setup
+   - "compare with baseline" → Task includes baseline capture
+
+**Output a requirements checklist:**
+
+```markdown
+## Extracted Requirements
+
+| # | Requirement | Type | Source |
+|---|-------------|------|--------|
+| R1 | Visual tests pass with 0 diff | verification | "DO NOT proceed until visual tests pass" |
+| R2 | Playwright test scripts created | deliverable | "Create scripts/visual-test-phase4.ts" |
+| R3 | Both servers running for comparison | infrastructure | "Run Gatsby (8000) and Next.js (3001)" |
+| R4 | TypeScript compiles | verification | Implicit for TS project |
+```
+
+Write this to `.working/colony/{project}/resources/requirements-checklist.md`
+
+**If a requirement cannot be automated:** Flag it explicitly and ask user how to handle. Do NOT silently drop it.
 
 ## Step 6: Assess Complexity
 
@@ -488,6 +529,8 @@ pending
 
 Verification must be achievable when the task completes. Don't reference artifacts that don't exist yet.
 
+**Simple verification (code-only tasks):**
+
 | Task Type | Verification | Example |
 |-----------|--------------|---------|
 | New module | TypeScript compiles | `npx tsc --noEmit` |
@@ -496,6 +539,44 @@ Verification must be achievable when the task completes. Don't reference artifac
 | Integration | Existing tests pass | `npm test` |
 | Test creation | New tests pass | `npm test -- --grep "pattern"` |
 | Documentation | File has content | `test -s README.md` |
+
+**Complex verification (when brief requires it):**
+
+| Task Type | Verification | Example |
+|-----------|--------------|---------|
+| Visual comparison | Playwright + pixelmatch | See template below |
+| API endpoint | curl + jq | `curl -s localhost:3000/api/x \| jq -e '.status == "ok"'` |
+| Browser behavior | Playwright script | `npx playwright test {script}` |
+| E2E flow | Full test suite | `npm run e2e` |
+| CLI output | Command + grep | `./cli --version \| grep -q "1.0"` |
+
+**Visual/Browser verification template:**
+
+```bash
+#!/bin/bash
+# Start servers
+npm run dev & PID1=$!
+npm run dev:next -- --port 3001 & PID2=$!
+
+# Wait for servers (with timeout)
+timeout 60 bash -c 'until curl -s http://localhost:8000 > /dev/null; do sleep 1; done'
+timeout 60 bash -c 'until curl -s http://localhost:3001 > /dev/null; do sleep 1; done'
+
+# Run visual tests
+npx playwright test scripts/visual-test.ts
+RESULT=$?
+
+# Cleanup
+kill $PID1 $PID2 2>/dev/null
+
+exit $RESULT
+```
+
+<critical>
+If the brief specifies a verification method, USE THAT METHOD.
+Do NOT substitute "npx tsc --noEmit" for "run visual tests with 0 diff".
+The brief's verification requirements are not suggestions.
+</critical>
 
 **Anti-pattern:** Don't reference tests that don't exist yet. If T001 creates a parser and T008 creates tests, T001's verification should be `npx tsc --noEmit`, not `npm test -- --grep parser`.
 
@@ -536,6 +617,89 @@ This is atomic - either all state is created or none. Reduces agent overhead and
 ```bash
 cp {brief-path} .working/colony/{project}/resources/original-brief.md
 ```
+
+## Step 13.5: Validate Requirement Coverage (MANDATORY)
+
+<critical>
+This validation step catches requirement drift BEFORE execution begins.
+If validation fails, DO NOT proceed to Step 14. Fix the tasks first.
+</critical>
+
+**Spawn a validation agent:**
+
+```
+Task(
+  subagent_type: "general-purpose",
+  model: "haiku",  // Validation is analysis, not implementation
+  prompt: "You are a requirements validator. Your job is to ensure every requirement
+from the brief has been translated into executable tasks.
+
+## Inputs
+
+1. Original brief: .working/colony/{project}/resources/original-brief.md
+2. Requirements checklist: .working/colony/{project}/resources/requirements-checklist.md
+3. Task files: .working/colony/{project}/tasks/*.md
+
+## Validation Process
+
+1. Read the original brief
+2. Read the requirements checklist
+3. Read ALL task files
+4. For EACH requirement in the checklist:
+   - Find the task(s) that address it
+   - Verify the task's acceptance criteria or verification command actually tests it
+   - Flag any requirement without coverage
+
+## Output
+
+Create `.working/colony/{project}/resources/validation-report.md`:
+
+```markdown
+# Requirement Coverage Report
+
+## Coverage Summary
+- Total requirements: {N}
+- Covered: {X}
+- Missing: {Y}
+- Weak coverage: {Z}
+
+## Detailed Analysis
+
+### ✅ Covered Requirements
+| Req | Task | How Verified |
+|-----|------|--------------|
+| R1: Visual tests | T019 | Playwright script in verification command |
+
+### ❌ Missing Requirements
+| Req | Issue | Suggested Fix |
+|-----|-------|---------------|
+| R2: 0 pixel diff | No task verifies pixel comparison | Add pixelmatch check to T019 |
+
+### ⚠️ Weak Coverage
+| Req | Task | Issue |
+|-----|------|-------|
+| R3: Tab navigation | T016 | Says "tab navigation works" but no actual test |
+```
+
+Respond with:
+- 'PASS' if all requirements covered
+- 'FAIL: {list of gaps}' if any missing"
+)
+```
+
+**Process the validation result:**
+
+**If PASS:** Proceed to Step 14.
+
+**If FAIL:**
+
+1. Review the gaps identified
+2. Either:
+   a. Update task files to add missing verification, OR
+   b. Create additional tasks for missing requirements
+3. Re-run validation until PASS
+
+**Do NOT skip this step.** The brief is a contract. If requirements aren't covered, execution will produce incomplete results.
 
 ## Step 14: Summary
 

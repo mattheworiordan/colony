@@ -1,7 +1,7 @@
 ---
 name: colony-deploy
 description: Deploy workers with smart parallelization and verification
-version: 1.3.0
+version: 1.4.0
 status: active
 
 # Claude Code command registration
@@ -268,16 +268,53 @@ Task file: .working/colony/{project}/tasks/{task-id}.md
 Worker summary: {one-line from worker}
 Files changed: {list}
 
-Verify:
-1. Run verification command from task file
-2. Run linter on changed files (e.g., `npx xo {files}` or project lint command)
-3. Check all acceptance criteria
-4. Inspect file contents match requirements
+═══════════════════════════════════════════════════════════
+VERIFICATION PROCESS (in order)
+═══════════════════════════════════════════════════════════
+
+1. **RUN the verification command from task file**
+   - This is the PRIMARY verification
+   - If it's a complex command (starts servers, runs Playwright, etc.), RUN IT
+   - Do NOT substitute a simpler check
+   - If the command fails, the task FAILS
+
+2. **Run linter on changed files**
+   - e.g., `npx xo {files}` or project lint command
+   - Lint errors = FAIL
+
+3. **Check each acceptance criterion literally**
+   - "Tab navigation works" → Actually test tab navigation (click, verify)
+   - "0 pixel diff" → Actually check the diff output
+   - "Returns 200" → Actually curl the endpoint
+   - Do NOT assume criteria are met because files exist
+
+4. **Verify file contents match requirements**
+   - Read the files, check they implement what was asked
+   - Look for TODO, FIXME, or stub implementations
+   - Partial implementation = FAIL
+
+═══════════════════════════════════════════════════════════
+CRITICAL: VERIFICATION MEANS ACTUALLY TESTING
+═══════════════════════════════════════════════════════════
+
+If the acceptance criteria says "visual tests pass with 0 diff",
+you must:
+- Run the visual test script
+- Check the output shows 0 diff
+- If diff > 0, FAIL with the actual diff count
+
+Do NOT:
+- Just check if the test script file exists
+- Assume "TypeScript compiles" means visual tests pass
+- Substitute simpler verification
+
+The task file's verification command is the source of truth.
+RUN IT and check the result.
+
+═══════════════════════════════════════════════════════════
 
 IMPORTANT: Only verify files listed above. Ignore other files that may have been
 created by parallel tasks - they will be verified separately.
-
-═══════════════════════════════════════════════════════════
 
 Respond:
 {"result": "PASS", "summary": "..."}
@@ -295,12 +332,57 @@ ${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "task_complete" '{"task": "
 ```bash
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state task-fail {project} {task-id} "{error}"
 ```
-- If attempts < 3: reset to pending
-- If attempts >= 3: ask for human intervention
+
+### Retry and Give-Up Logic
+
+<critical>
+The worker+inspector loop has hard limits to prevent infinite retries.
+After exhausting retries, STOP and report - do not continue silently.
+</critical>
+
+**Per-task retry limits:**
+
+| Situation | Attempts < 3 | Attempts = 3 | Attempts > 3 |
+|-----------|--------------|--------------|--------------|
+| Worker STUCK | Reset to pending, retry | Mark blocked, report to user | N/A (blocked) |
+| Inspector FAIL | Reset to pending, retry with feedback | Mark failed, report to user | N/A (failed) |
+
+**When retrying, include failure context:**
+
+The worker on retry attempt N should receive:
+```
+Previous attempts: {N-1}
+Last failure reason: {inspector feedback or STUCK reason}
+What was tried: {summary of previous attempt}
+
+FIX THE UNDERLYING ISSUE. Do not just retry the same approach.
+```
+
+**Milestone-level failure threshold:**
+
+If **>50% of tasks in a milestone fail** after all retries:
+1. STOP execution
+2. Report: "Milestone {M} has critical failure rate ({X}% failed)"
+3. List all failed tasks with reasons
+4. Ask user: "Continue anyway?" or "Abort?"
+
+**Session-level circuit breaker:**
+
+If **5 consecutive tasks fail** across any milestones:
+1. STOP execution immediately
+2. Report: "Circuit breaker triggered - 5 consecutive failures"
+3. This likely indicates a systemic issue (wrong environment, missing dependency)
+4. Ask user to investigate before continuing
+
+**Stuck vs Failed distinction:**
+- **STUCK**: Worker couldn't complete (missing info, blocked by external factor)
+- **FAILED**: Worker completed but inspector rejected (quality issue)
+
+Both consume retry attempts, but STUCK may indicate the task definition needs revision.
 
 **If STUCK:**
-- attempts < 3 → pending
-- attempts >= 3 → blocked, ask user
+- attempts < 3 → pending, retry with more context
+- attempts >= 3 → blocked, ask user "Is the task definition correct?"
 
 ### 5.6a: Artifact Validation
 
@@ -374,6 +456,56 @@ ${CLAUDE_PLUGIN_ROOT}/bin/colony state set {project} 'milestones[0].status' '"co
 | `commit` | Auto-commit, continue | Auto-commit, continue |
 | `branch` | Create branch, continue | Create branch, ask to continue |
 | `pr` | Log for later, continue | Create PR, pause |
+
+### 5.8b: Fresh Context at Milestone Boundaries
+
+<critical>
+After completing a milestone, spawn a FRESH orchestrator for the next milestone.
+This prevents context degradation over long runs and ensures consistent adherence to instructions.
+</critical>
+
+**Why this matters:**
+- Long-running orchestrators accumulate context and can drift from instructions
+- Fresh context means fresh adherence to the orchestration rules
+- All state is persisted in state.json - nothing is lost by spawning fresh
+- This mirrors how workers already operate (fresh context per task)
+
+**After marking milestone complete:**
+
+1. Log the handoff:
+```bash
+${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "milestone_handoff" '{"from": "M1", "to": "M2", "reason": "fresh_context"}'
+```
+
+2. Spawn fresh orchestrator:
+```
+Task(
+  subagent_type: "general-purpose",
+  model: "{orchestrator_model}",
+  prompt: "Continue Colony orchestration for project: {project}
+
+  CRITICAL: Read and follow the FULL instructions in:
+  {CLAUDE_PLUGIN_ROOT}/commands/colony-deploy.md
+
+  Start from Step 1 (state initialization).
+
+  Previous milestone M{N} is complete. Continue with M{N+1}.
+
+  Configuration:
+  - Worker model: {worker_model}
+  - Inspector model: {inspector_model}
+  - CLI path: {CLAUDE_PLUGIN_ROOT}/bin/colony
+  - Autonomous mode: {true/false}
+
+  The previous orchestrator completed M{N}. Pick up from there."
+)
+```
+
+3. Exit current orchestrator (return control to spawned agent).
+
+**Exception:** If this is the FINAL milestone, don't spawn - proceed to Step 6 (Final Summary).
+
+---
 
 **Non-autonomous mode (default):**
 
