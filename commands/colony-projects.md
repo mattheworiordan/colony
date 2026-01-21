@@ -1,7 +1,7 @@
 ---
 name: colony-projects
 description: List all colony projects with summary status
-version: 1.0.0
+version: 1.7.0
 status: active
 
 # Claude Code command registration

@@ -36,7 +36,7 @@ DEFAULT_WORKING_DIR=".working"
 # Users with "default" in config will get these values
 CODE_DEFAULT_ORCHESTRATOR="inherit"  # Must be "inherit" - sub-agents can't spawn sub-agents
 CODE_DEFAULT_WORKER="inherit"
-CODE_DEFAULT_INSPECTOR="haiku"
+CODE_DEFAULT_INSPECTOR="sonnet"  # Sonnet for better judgment on semantic verification
 
 # Colors (disabled if not a terminal)
 if [[ -t 1 ]]; then

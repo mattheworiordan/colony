@@ -1,7 +1,7 @@
 ---
 name: colony-mobilize
 description: Prepare a brief for parallel execution - task decomposition and worker mobilization
-version: 1.4.0
+version: 1.7.0
 status: active
 
 # Claude Code command registration
@@ -153,8 +153,14 @@ Every verification requirement in the brief MUST map to:
 - An acceptance criterion that checks it, OR
 - A verification command that runs it
 
-If the brief says "run X", there must be a task/verification that ACTUALLY RUNS X.
+VERIFICATION MUST EXECUTE, NOT JUST EXIST:
+- If the brief says "run X", verification must ACTUALLY RUN X
+- If the brief says "test Y passes", verification must EXECUTE the test
+- Checking that code exists is NOT the same as running that code
+- Checking that a file was created is NOT the same as verifying it works
+
 NO SUBSTITUTING complex verification with simpler checks.
+NO DELEGATING verification to humans when automation is possible.
 </critical>
 
 **Scan the brief and extract:**
@@ -573,9 +579,19 @@ exit $RESULT
 ```
 
 <critical>
-If the brief specifies a verification method, USE THAT METHOD.
-Do NOT substitute "npx tsc --noEmit" for "run visual tests with 0 diff".
-The brief's verification requirements are not suggestions.
+VERIFICATION MUST MATCH REQUIREMENT SEMANTICS:
+
+The verification command must EXECUTE what the requirement describes.
+Simpler proxies are NOT acceptable substitutes:
+
+| Requirement | Wrong Verification | Right Verification |
+|-------------|-------------------|-------------------|
+| "Tests pass" | Check test file exists | Run the tests |
+| "API returns 200" | Check route exists | curl and check response |
+| "Visual diff is 0" | Check screenshot exists | Run comparison, check diff count |
+| "Build succeeds" | Check config exists | Run the build |
+
+If the brief says "run X", verification must run X - not check that X could theoretically run.
 </critical>
 
 **Anti-pattern:** Don't reference tests that don't exist yet. If T001 creates a parser and T008 creates tests, T001's verification should be `npx tsc --noEmit`, not `npm test -- --grep parser`.
@@ -623,6 +639,10 @@ cp {brief-path} .working/colony/{project}/resources/original-brief.md
 <critical>
 This validation step catches requirement drift BEFORE execution begins.
 If validation fails, DO NOT proceed to Step 14. Fix the tasks first.
+
+CORE PRINCIPLE: Human review is ADDITION, not REPLACEMENT.
+Milestone checkpoints may include human review, but this does NOT excuse
+automated testing. Every testable requirement must have automated verification.
 </critical>
 
 **Spawn a validation agent:**
@@ -630,15 +650,23 @@ If validation fails, DO NOT proceed to Step 14. Fix the tasks first.
 ```
 Task(
   subagent_type: "general-purpose",
-  model: "haiku",  // Validation is analysis, not implementation
+  model: "sonnet",  // Validation requires judgment about semantic equivalence
   prompt: "You are a requirements validator. Your job is to ensure every requirement
-from the brief has been translated into executable tasks.
+from the brief has been translated into executable, automated tasks.
 
 ## Inputs
 
 1. Original brief: .working/colony/{project}/resources/original-brief.md
 2. Requirements checklist: .working/colony/{project}/resources/requirements-checklist.md
 3. Task files: .working/colony/{project}/tasks/*.md
+
+## Core Principle
+
+HUMAN REVIEW IS ADDITION, NOT REPLACEMENT.
+
+Milestone checkpoints may pause for human approval - that's fine.
+But human review does NOT excuse automated testing.
+Every testable requirement must have automated verification.
 
 ## Validation Process
 
@@ -647,8 +675,16 @@ from the brief has been translated into executable tasks.
 3. Read ALL task files
 4. For EACH requirement in the checklist:
    - Find the task(s) that address it
-   - Verify the task's acceptance criteria or verification command actually tests it
-   - Flag any requirement without coverage
+   - Verify the verification command ACTUALLY EXECUTES the requirement
+   - Check for semantic equivalence, not just structural presence
+
+## Automatic Failures
+
+Flag as WEAK COVERAGE if verification:
+- Checks file existence instead of running tests
+- Checks code presence instead of executing code
+- Says 'manual verification required' for automatable checks
+- Substitutes simpler proxy checks for actual requirement
 
 ## Output
 
@@ -659,7 +695,7 @@ Create `.working/colony/{project}/resources/validation-report.md`:
 
 ## Coverage Summary
 - Total requirements: {N}
-- Covered: {X}
+- Covered (automated): {X}
 - Missing: {Y}
 - Weak coverage: {Z}
 
@@ -668,22 +704,25 @@ Create `.working/colony/{project}/resources/validation-report.md`:
 ### ✅ Covered Requirements
 | Req | Task | How Verified |
 |-----|------|--------------|
-| R1: Visual tests | T019 | Playwright script in verification command |
+| R1: Tests pass | T019 | Verification runs `npm test` |
 
 ### ❌ Missing Requirements
 | Req | Issue | Suggested Fix |
 |-----|-------|---------------|
-| R2: 0 pixel diff | No task verifies pixel comparison | Add pixelmatch check to T019 |
+| R2: API returns 200 | No task calls the endpoint | Add curl check to T015 |
 
-### ⚠️ Weak Coverage
+### ⚠️ Weak Coverage (MUST FIX)
 | Req | Task | Issue |
 |-----|------|-------|
-| R3: Tab navigation | T016 | Says "tab navigation works" but no actual test |
+| R3: Build succeeds | T016 | Verification checks config exists, doesn't run build |
 ```
 
+IMPORTANT: Weak coverage is NOT acceptable. If verification doesn't
+EXECUTE the requirement, it's the same as missing coverage.
+
 Respond with:
-- 'PASS' if all requirements covered
-- 'FAIL: {list of gaps}' if any missing"
+- 'PASS' if all requirements have AUTOMATED coverage
+- 'FAIL: {list of gaps}' if any missing or weak"
 )
 ```
 

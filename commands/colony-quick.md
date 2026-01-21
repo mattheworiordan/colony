@@ -1,7 +1,7 @@
 ---
 name: colony-quick
 description: Quick task execution from a simple prompt - auto-generates brief and tasks
-version: 1.0.0
+version: 1.7.0
 status: experimental
 
 # Claude Code command registration

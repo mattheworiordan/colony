@@ -1,5 +1,57 @@
 # Changelog
 
+## v1.7.0 (2026-01-20)
+
+### Summary
+
+**Verification integrity + human-as-addition principle.** Fixes systemic verification failures where requirements degraded during decomposition, leading to weak verification commands that passed but didn't actually test what the brief required.
+
+### Core Principle: Human is Addition, Not Replacement
+
+Milestone checkpoints may pause for human review - that's expected. But human review does NOT excuse automated testing. The agent must complete all automated verification. Human is an additional safety net, not a substitute.
+
+This principle is now explicit throughout Colony:
+- Core Principles section (#6)
+- Inspector verification rules
+- Mobilize validation agent
+
+### Fix: Inspector Default Model → Sonnet
+
+Changed default inspector model from Haiku to Sonnet:
+- Better judgment on semantic verification
+- Catches "manual required" escape hatches
+- Recognizes when verification substitutes simpler checks
+- Cost difference is negligible (~1.4¢ vs ~0.1¢ per inspection)
+
+### Fix: Generic Verification Rules
+
+Replaced specific examples with generic patterns that apply to any brief:
+
+**Mobilize (task decomposition):**
+- "Verification must EXECUTE, not just EXIST"
+- Table of wrong vs right verification patterns
+- Validation agent upgraded to Sonnet for better judgment
+- Weak coverage now treated same as missing coverage
+
+**Deploy (inspector):**
+- Automatic fail conditions for substitution
+- Automatic fail for "manual required" on automatable checks
+- Requirements checklist passed to inspector for cross-reference
+
+### New: Requirements Checklist in Inspector Bundle
+
+Inspector now receives the requirements checklist from mobilize. This allows cross-referencing to catch:
+- Task file says X, but requirement says Y
+- Verification command doesn't actually test the requirement
+- Degraded requirements that slipped through mobilize
+
+### Other Changes
+
+- Inspector default model: "haiku" → "sonnet"
+- All command versions unified to 1.7.0
+
+---
+
 ## v1.6.0 (2026-01-20)
 
 ### Summary

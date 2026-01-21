@@ -1,7 +1,7 @@
 ---
 name: colony-deploy
 description: Deploy workers with smart parallelization and verification
-version: 1.6.0
+version: 1.7.0
 status: active
 
 # Claude Code command registration
@@ -19,6 +19,7 @@ Execute tasks from a colony project using sub-agents with verification.
 3. **CLI for state** - Use `colony` CLI for state operations (saves tokens)
 4. **Isolated execution** - Each task runs in fresh sub-agent context
 5. **Independent verification** - Different agent verifies completion
+6. **Human is ADDITION, not replacement** - Milestone checkpoints add human review, but do NOT excuse automated testing. Every automatable check must be automated.
 
 <critical>
 YOU ARE AN ORCHESTRATOR, NOT A WORKER.
@@ -300,14 +301,22 @@ inspector_model=$(${CLAUDE_PLUGIN_ROOT}/bin/colony get-model inspector)
 ${CLAUDE_PLUGIN_ROOT}/bin/colony state log {project} "inspection_started" '{"task": "{task-id}", "model": "'"$inspector_model"'"}'
 ```
 
-**Step B: Get diff for inspector**
+**Step B: Get diff and requirements for inspector**
 
-Before spawning inspector, get the diff for changed files:
+Before spawning inspector, get the diff and requirements checklist:
 
 ```bash
 # Get diff for files changed by this task
 git diff HEAD -- {files_changed} > /tmp/task_diff.txt
 task_diff=$(cat /tmp/task_diff.txt)
+
+# Get requirements checklist if it exists (for cross-reference)
+requirements_file=".working/colony/{project}/resources/requirements-checklist.md"
+if [[ -f "$requirements_file" ]]; then
+  requirements=$(cat "$requirements_file")
+else
+  requirements="No requirements checklist available."
+fi
 ```
 
 **Step C: Spawn inspector (REQUIRED)**
@@ -329,6 +338,12 @@ Worker summary: {one-line from worker}
 Files changed: {list}
 
 ═══════════════════════════════════════════════════════════
+REQUIREMENTS CHECKLIST (cross-reference for verification)
+═══════════════════════════════════════════════════════════
+
+{requirements}
+
+═══════════════════════════════════════════════════════════
 DIFF OF CHANGES (use this first - avoid re-reading files)
 ═══════════════════════════════════════════════════════════
 
@@ -342,7 +357,7 @@ VERIFICATION PROCESS
 
 1. **RUN the verification command from task file**
    - This is the PRIMARY verification
-   - If it's a complex command (starts servers, runs Playwright, etc.), RUN IT
+   - If it's a complex command (starts servers, runs tests, etc.), RUN IT
    - Do NOT substitute a simpler check
    - If the command fails, the task FAILS
 
@@ -352,9 +367,9 @@ VERIFICATION PROCESS
 
 3. **Check each acceptance criterion using the diff**
    - Review the diff to confirm the implementation matches requirements
-   - "Tab navigation works" → Actually test tab navigation (click, verify)
-   - "0 pixel diff" → Actually check the diff output
-   - "Returns 200" → Actually curl the endpoint
+   - If criterion says "X works" → Actually test X
+   - If criterion says "returns Y" → Actually call and check response
+   - If criterion says "passes" → Actually run the test
 
 4. **If uncertain, expand context**
    - If the diff doesn't provide enough context to verify correctness
@@ -363,23 +378,37 @@ VERIFICATION PROCESS
    - THEN use the Read tool to get the full file
 
 ═══════════════════════════════════════════════════════════
-CRITICAL: VERIFICATION MEANS ACTUALLY TESTING
+CORE PRINCIPLE: HUMAN IS ADDITION, NOT REPLACEMENT
 ═══════════════════════════════════════════════════════════
 
-If the acceptance criteria says "visual tests pass with 0 diff",
-you must:
-- Run the visual test script
-- Check the output shows 0 diff
-- If diff > 0, FAIL with the actual diff count
+Milestone checkpoints may pause for human review - that's fine.
+But human review does NOT excuse you from automated verification.
 
-Do NOT:
-- Just check if the test script file exists
-- Assume "TypeScript compiles" means visual tests pass
-- Substitute simpler verification
-- Re-read files unnecessarily when the diff is sufficient
+YOU must verify everything that CAN be automated.
+The human is an additional safety net, not a substitute for your work.
 
-The task file's verification command is the source of truth.
-RUN IT and check the result.
+═══════════════════════════════════════════════════════════
+AUTOMATIC FAIL CONDITIONS
+═══════════════════════════════════════════════════════════
+
+FAIL immediately if:
+
+1. **Verification substitutes simpler check**
+   - Requirement: "tests pass" → Verification: checks file exists → FAIL
+   - Requirement: "API returns 200" → Verification: checks route exists → FAIL
+   - Requirement: "build succeeds" → Verification: checks config exists → FAIL
+
+2. **Verification claims "manual required" for automatable check**
+   - "Visual test requires manual server start" → FAIL (start the server)
+   - "Needs user to verify in browser" → FAIL (use automation)
+   - "Manual QA step required" → FAIL (automate what can be automated)
+
+3. **Acceptance criteria not actually tested**
+   - Criterion says "X works" but no test of X → FAIL
+   - Criterion says "handles Y" but no Y scenario tested → FAIL
+
+The verification command must EXECUTE what it claims to verify.
+Checking that code exists is NOT the same as running that code.
 
 ═══════════════════════════════════════════════════════════
 
